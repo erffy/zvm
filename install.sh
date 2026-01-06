@@ -711,7 +711,5 @@ main() {
     log "=== Installation completed successfully ==="
 }
 
-# Run installation with error handling
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
+# Run installation
+main "$@"
