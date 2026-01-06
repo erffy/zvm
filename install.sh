@@ -237,9 +237,11 @@ verify_script() {
         return 1
     fi
     
-    # Check if it's a valid shell script
-    if ! head -n1 "$script" | grep -qE '^#!/.*/(bash|sh)'; then
-        error "Downloaded file is not a valid shell script"
+    # Check if it's a valid shell script (check shebang)
+    local first_line=$(head -n1 "$script")
+
+    if [[ ! "$first_line" =~ ^#! ]]; then
+        error "Downloaded file is missing shebang"
         return 1
     fi
     
