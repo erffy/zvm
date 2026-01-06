@@ -621,10 +621,29 @@ cat > "$bash_dir/zvm" <<'EOF'
 _zvm() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
-  local cmds="install use list list-remote current remove auto nightly env doctor completion-install update-self"
+  local cmds="install use list list-remote current remove auto nightly env doctor clean completion-install update-self"
   
   if [[ $COMP_CWORD -eq 1 ]]; then
     COMPREPLY=($(compgen -W "$cmds" -- "$cur"))
+  elif [[ $COMP_CWORD -eq 2 ]]; then
+    case "$prev" in
+      install)
+        # Show remote versions from cached index
+        local versions
+        if [[ -f "$HOME/.zig/cache/index.json" ]]; then
+          versions=$(jq -r 'keys[]' "$HOME/.zig/cache/index.json" 2>/dev/null | sort -V)
+          COMPREPLY=($(compgen -W "$versions" -- "$cur"))
+        fi
+        ;;
+      use|remove)
+        # Show installed versions
+        local versions
+        if [[ -d "$HOME/.zig/versions" ]]; then
+          versions=$(ls -1 "$HOME/.zig/versions" 2>/dev/null)
+          COMPREPLY=($(compgen -W "$versions" -- "$cur"))
+        fi
+        ;;
+    esac
   fi
 }
 complete -F _zvm zvm
@@ -645,10 +664,34 @@ _zvm() {
     'nightly:install and use latest nightly'
     'env:show environment setup'
     'doctor:check installation'
+    'clean:clear download cache'
     'completion-install:install shell completions'
     'update-self:update zvm'
   )
-  _describe 'command' commands
+  
+  case $CURRENT in
+    2)
+      _describe 'command' commands
+      ;;
+    3)
+      case ${words[2]} in
+        install)
+          local -a versions
+          if [[ -f "$HOME/.zig/cache/index.json" ]]; then
+            versions=(${(f)"$(jq -r 'keys[]' "$HOME/.zig/cache/index.json" 2>/dev/null | sort -V)"})
+            _describe 'remote version' versions
+          fi
+          ;;
+        use|remove)
+          local -a versions
+          if [[ -d "$HOME/.zig/versions" ]]; then
+            versions=(${(f)"$(ls -1 "$HOME/.zig/versions" 2>/dev/null)"})
+            _describe 'installed version' versions
+          fi
+          ;;
+      esac
+      ;;
+  esac
 }
 _zvm
 EOF
@@ -665,8 +708,15 @@ complete -c zvm -n "__fish_use_subcommand" -a auto -d "Use version from .zigvers
 complete -c zvm -n "__fish_use_subcommand" -a nightly -d "Install latest nightly"
 complete -c zvm -n "__fish_use_subcommand" -a env -d "Show environment setup"
 complete -c zvm -n "__fish_use_subcommand" -a doctor -d "Check installation"
+complete -c zvm -n "__fish_use_subcommand" -a clean -d "Clear download cache"
 complete -c zvm -n "__fish_use_subcommand" -a completion-install -d "Install completions"
 complete -c zvm -n "__fish_use_subcommand" -a update-self -d "Update zvm"
+
+# Complete versions for install command (remote versions)
+complete -c zvm -n "__fish_seen_subcommand_from install" -f -a "(test -f ~/.zig/cache/index.json && jq -r 'keys[]' ~/.zig/cache/index.json 2>/dev/null | sort -V)"
+
+# Complete versions for use/remove commands (local versions)
+complete -c zvm -n "__fish_seen_subcommand_from use remove" -f -a "(test -d ~/.zig/versions && ls -1 ~/.zig/versions 2>/dev/null)"
 EOF
 
   info "shell completions installed"
