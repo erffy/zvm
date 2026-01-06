@@ -1,0 +1,787 @@
+#!/usr/bin/env bash
+
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Copyright (c) 2026 erffy
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses>.
+
+set -euo pipefail
+
+# CONFIG
+ZIG_HOME="${ZIG_HOME:-$HOME/.zig}"
+VERSIONS_DIR="$ZIG_HOME/versions"
+CACHE_DIR="$ZIG_HOME/cache"
+ACTIVE_LINK="$ZIG_HOME/active"
+BIN_DIR="${ZVM_BIN_DIR:-$HOME/.local/bin}"
+ZIG_SYMLINK="$BIN_DIR/zig"
+SELF_PATH="${BASH_SOURCE[0]}"
+
+INDEX_URL="https://ziglang.org/download/index.json"
+MIRROR_LIST_URL="https://ziglang.org/download/community-mirrors.txt"
+
+CACHE_TTL=$((6 * 3600))
+INDEX_CACHE="$CACHE_DIR/index.json"
+INDEX_TS="$CACHE_DIR/index.timestamp"
+MIRROR_CACHE="$CACHE_DIR/mirrors.txt"
+MIRROR_TS="$CACHE_DIR/mirrors.timestamp"
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+case "$ARCH" in
+  x86_64) ARCH="x86_64" ;;
+  aarch64|arm64) ARCH="aarch64" ;;
+  armv7l|armv7) ARCH="arm" ;;
+  i686|i386) ARCH="x86" ;;
+  riscv64) ARCH="riscv64" ;;
+  powerpc64le|ppc64le) ARCH="powerpc64le" ;;
+  powerpc64|ppc64) ARCH="powerpc64" ;;
+  s390x) ARCH="s390x" ;;
+  loongarch64) ARCH="loongarch64" ;;
+  *) echo "zvm: unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+
+case "$OS" in
+  linux) OS="linux" ;;
+  darwin) OS="macos" ;;
+  freebsd) OS="freebsd" ;;
+  netbsd) OS="netbsd" ;;
+  mingw*|msys*|cygwin*) OS="windows" ;;
+  *) echo "zvm: unsupported OS: $OS" >&2; exit 1 ;;
+esac
+
+# Platform key format used by Zig: ARCH-OS (e.g., x86_64-linux)
+PLATFORM="$ARCH-$OS"
+
+mkdir -p "$VERSIONS_DIR" "$CACHE_DIR" "$BIN_DIR"
+
+# HELPERS
+die() { echo "zvm: error: $*" >&2; exit 1; }
+warn() { echo "zvm: warning: $*" >&2; }
+info() { echo "zvm: $*"; }
+now() { date +%s; }
+
+require() {
+  command -v "$1" >/dev/null || die "missing required dependency: $1 (install it with your package manager)"
+}
+
+# Check for download tools (at least one required)
+detect_downloader() {
+  # Allow user to force a specific downloader via environment variable
+  if [[ -n "${ZVM_DOWNLOADER:-}" ]]; then
+    case "$ZVM_DOWNLOADER" in
+      aria2c|curl|wget)
+        if command -v "$ZVM_DOWNLOADER" >/dev/null 2>&1; then
+          echo "$ZVM_DOWNLOADER"
+          return 0
+        else
+          warn "ZVM_DOWNLOADER set to '$ZVM_DOWNLOADER' but not found, falling back to auto-detect"
+        fi
+        ;;
+      *)
+        warn "invalid ZVM_DOWNLOADER='$ZVM_DOWNLOADER', falling back to auto-detect"
+        ;;
+    esac
+  fi
+  
+  # Auto-detect based on priority: aria2c (fastest) > curl (common) > wget (fallback)
+  local available=()
+  
+  for tool in aria2c curl wget; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      available+=("$tool")
+    fi
+  done
+  
+  if [[ ${#available[@]} -eq 0 ]]; then
+    die "no download tool found. Install one of: aria2 (recommended), curl, or wget"
+  fi
+  
+  # Return the best available option
+  echo "${available[0]}"
+}
+
+DOWNLOADER=$(detect_downloader)
+
+download_file() {
+  local url="$1"
+  local output="$2"
+  local retries=3
+  local attempt=1
+  
+  while (( attempt <= retries )); do
+    if (( attempt > 1 )); then
+      warn "download failed, retrying ($attempt/$retries)..."
+      sleep 2
+    fi
+    
+    case "$DOWNLOADER" in
+      aria2c)
+        if aria2c --console-log-level=warn --summary-interval=0 \
+          -x 16 -s 16 -k 1M \
+          --max-tries=3 --retry-wait=2 \
+          --connect-timeout=10 --timeout=30 \
+          --allow-overwrite=true \
+          --auto-file-renaming=false \
+          -d "$(dirname "$output")" -o "$(basename "$output")" \
+          "$url" 2>&1; then
+          return 0
+        fi
+        ;;
+      curl)
+        if curl -fL --progress-bar \
+          --connect-timeout 10 --max-time 600 \
+          --retry 2 --retry-delay 2 \
+          "$url" -o "$output" 2>&1; then
+          return 0
+        fi
+        ;;
+      wget)
+        if wget --show-progress -q \
+          --timeout=30 --tries=3 --waitretry=2 \
+          -O "$output" "$url" 2>&1; then
+          return 0
+        fi
+        ;;
+    esac
+    
+    ((attempt++))
+  done
+  
+  return 1
+}
+
+require jq
+require sha256sum
+require tar
+
+cache_valid() {
+  [[ -f "$1" && -f "$2" ]] && (( $(now) - $(cat "$2" 2>/dev/null || echo 0) < CACHE_TTL ))
+}
+
+# METADATA
+zig_meta() {
+  if cache_valid "$INDEX_CACHE" "$INDEX_TS"; then
+    cat "$INDEX_CACHE"
+  else
+    info "fetching Zig index..."
+    local tmp="$INDEX_CACHE.tmp"
+    case "$DOWNLOADER" in
+      aria2c)
+        if aria2c --console-log-level=error --summary-interval=0 \
+          -x 4 -s 4 --allow-overwrite=true --auto-file-renaming=false \
+          -d "$(dirname "$tmp")" -o "$(basename "$tmp")" \
+          "$INDEX_URL" 2>/dev/null; then
+          mv "$tmp" "$INDEX_CACHE"
+          now > "$INDEX_TS"
+          cat "$INDEX_CACHE"
+        else
+          rm -f "$tmp"
+          [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
+          die "failed to fetch index and no cache available"
+        fi
+        ;;
+      curl)
+        if curl -fsSL --max-time 30 "$INDEX_URL" -o "$tmp"; then
+          mv "$tmp" "$INDEX_CACHE"
+          now > "$INDEX_TS"
+          cat "$INDEX_CACHE"
+        else
+          rm -f "$tmp"
+          [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
+          die "failed to fetch index and no cache available"
+        fi
+        ;;
+      wget)
+        if wget --timeout=30 -q -O "$tmp" "$INDEX_URL"; then
+          mv "$tmp" "$INDEX_CACHE"
+          now > "$INDEX_TS"
+          cat "$INDEX_CACHE"
+        else
+          rm -f "$tmp"
+          [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
+          die "failed to fetch index and no cache available"
+        fi
+        ;;
+    esac
+  fi
+}
+
+zig_field() {
+  local version="$1" field="$2"
+  zig_meta | jq -r ".\"$version\".\"$PLATFORM\".$field // empty" 2>/dev/null
+}
+
+# MIRRORS
+fetch_mirrors() {
+  if cache_valid "$MIRROR_CACHE" "$MIRROR_TS"; then
+    cat "$MIRROR_CACHE"
+    return
+  fi
+
+  info "fetching mirror list..."
+  local tmp="$MIRROR_CACHE.tmp"
+  local fetched=false
+  
+  case "$DOWNLOADER" in
+    aria2c)
+      if aria2c --console-log-level=error --summary-interval=0 \
+        --allow-overwrite=true --auto-file-renaming=false \
+        -d "$(dirname "$tmp")" -o "$(basename "$tmp")" \
+        "$MIRROR_LIST_URL" 2>/dev/null; then
+        fetched=true
+      fi
+      ;;
+    curl)
+      if curl -fsSL --max-time 10 "$MIRROR_LIST_URL" -o "$tmp"; then
+        fetched=true
+      fi
+      ;;
+    wget)
+      if wget --timeout=10 -q -O "$tmp" "$MIRROR_LIST_URL"; then
+        fetched=true
+      fi
+      ;;
+  esac
+  
+  if [[ "$fetched" == "true" ]] && sed 's/#.*//' "$tmp" | grep -E '^https?://' > "$MIRROR_CACHE"; then
+    rm -f "$tmp"
+    now > "$MIRROR_TS"
+    cat "$MIRROR_CACHE"
+  else
+    rm -f "$tmp"
+    [[ -f "$MIRROR_CACHE" ]] && { warn "using cached mirrors"; cat "$MIRROR_CACHE"; return; }
+    echo "https://ziglang.org/download"
+  fi
+}
+
+pick_mirror() {
+  local best="" best_time=99999
+
+  info "testing mirrors..."
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    local t
+    # Use appropriate tool for speed test
+    case "$DOWNLOADER" in
+      aria2c|curl)
+        t=$(curl -o /dev/null -sS -w '%{time_total}' --max-time 3 "$m" 2>/dev/null || echo "99.999")
+        ;;
+      wget)
+        # wget doesn't have a direct equivalent, use curl if available for testing
+        if command -v curl >/dev/null 2>&1; then
+          t=$(curl -o /dev/null -sS -w '%{time_total}' --max-time 3 "$m" 2>/dev/null || echo "99.999")
+        else
+          t="1.0"  # Default if can't test
+        fi
+        ;;
+    esac
+    
+    # Convert decimal to integer milliseconds using awk
+    local t_ms
+    t_ms=$(echo "$t" | awk '{printf "%.0f", $1 * 1000}')
+    [[ -z "$t_ms" || "$t_ms" == "0" ]] && t_ms=99999
+    if (( t_ms < best_time )); then
+      best="$m"
+      best_time="$t_ms"
+    fi
+  done < <(fetch_mirrors)
+
+  [[ -z "$best" ]] && best="https://ziglang.org/download"
+  local display_time=$(echo "$best_time" | awk '{printf "%.2f", $1 / 1000}')
+  info "selected mirror: $best (${display_time}s)"
+  echo "$best"
+}
+
+# CORE COMMANDS
+install() {
+  local version="$1"
+  [[ -z "$version" ]] && die "version required (e.g., 'zvm install 0.11.0' or 'zvm install master')"
+
+  local dir="$VERSIONS_DIR/$version"
+  if [[ -d "$dir" ]]; then
+    info "Zig $version already installed"
+    return 0
+  fi
+
+  # Check if version exists
+  local version_exists
+  version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
+  
+  if [[ "$version_exists" != "true" ]]; then
+    die "version '$version' not found. Use 'zvm list-remote' to see available versions"
+  fi
+
+  local tarball shasum
+  tarball="$(zig_field "$version" tarball)"
+  shasum="$(zig_field "$version" shasum)"
+
+  if [[ -z "$tarball" ]]; then
+    # Show available platforms for this version
+    local available_platforms
+    available_platforms=$(zig_meta | jq -r ".\"$version\" | keys[]" 2>/dev/null | grep -v "^date$\|^version$\|^docs$\|^stdDocs$\|^src$\|^bootstrap$" | head -10)
+    warn "no download available for platform: $PLATFORM"
+    if [[ -n "$available_platforms" ]]; then
+      warn "available platforms for $version:"
+      echo "$available_platforms" | while read -r p; do
+        echo "  - $p" >&2
+      done
+    fi
+    die "platform '$PLATFORM' not supported for version '$version'"
+  fi
+
+  local mirror url file
+  mirror="$(pick_mirror)"
+  
+  # Extract the full URL from tarball field
+  # The tarball field contains the complete URL
+  url="$tarball"
+  file="$CACHE_DIR/$(basename "$tarball")"
+
+  info "downloading Zig $version for $PLATFORM using $DOWNLOADER..."
+  if ! download_file "$url" "$file.tmp"; then
+    rm -f "$file.tmp"
+    die "download failed"
+  fi
+  mv "$file.tmp" "$file"
+
+  if [[ -n "$shasum" ]]; then
+    info "verifying checksum..."
+    if ! echo "$shasum  $file" | sha256sum -c - >/dev/null 2>&1; then
+      rm -f "$file"
+      die "checksum verification failed"
+    fi
+  else
+    warn "no checksum available, skipping verification"
+  fi
+
+  info "extracting..."
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+
+  # Handle both .tar.xz and .zip files
+  if [[ "$file" == *.zip ]]; then
+    if ! command -v unzip >/dev/null; then
+      rm -rf "$tmp_dir"
+      die "unzip not found - install it to extract Windows builds"
+    fi
+    if ! unzip -q "$file" -d "$tmp_dir" 2>/dev/null; then
+      rm -rf "$tmp_dir"
+      die "extraction failed"
+    fi
+  else
+    if ! tar -xJf "$file" -C "$tmp_dir" 2>/dev/null; then
+      rm -rf "$tmp_dir"
+      die "extraction failed"
+    fi
+  fi
+
+  local extracted
+  extracted="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  if [[ -z "$extracted" ]]; then
+    rm -rf "$tmp_dir"
+    die "no directory found in archive"
+  fi
+
+  mv "$extracted" "$dir"
+  rm -rf "$tmp_dir"
+  trap - EXIT INT TERM
+  
+  info "installed Zig $version → $dir"
+}
+
+use() {
+  local version="${1:-}"
+  [[ -z "$version" ]] && die "version required (e.g., 'zvm use 0.15.2')"
+
+  local dir="$VERSIONS_DIR/$version"
+  [[ ! -d "$dir" ]] && die "Zig $version not installed. Run 'zvm install $version' first"
+
+  ln -sfn "$dir" "$ACTIVE_LINK"
+  ln -sfn "$ACTIVE_LINK/zig" "$ZIG_SYMLINK"
+
+  info "now using Zig $version"
+  "$ZIG_SYMLINK" version 2>/dev/null || true
+}
+
+list() {
+  if [[ ! -d "$VERSIONS_DIR" || -z "$(ls -A "$VERSIONS_DIR" 2>/dev/null)" ]]; then
+    info "no versions installed"
+    return
+  fi
+
+  local current_version
+  current_version="$(current)"
+  
+  info "installed versions:"
+  for v in "$VERSIONS_DIR"/*; do
+    local ver="$(basename "$v")"
+    if [[ "$ver" == "$current_version" ]]; then
+      echo "  * $ver (active)"
+    else
+      echo "    $ver"
+    fi
+  done
+}
+
+list_remote() {
+  info "fetching available versions..."
+  zig_meta | jq -r 'keys[]' | sort -V
+}
+
+current() {
+  if [[ -L "$ACTIVE_LINK" ]]; then
+    basename "$(readlink "$ACTIVE_LINK")"
+  else
+    echo "none"
+    return 1
+  fi
+}
+
+remove() {
+  local version="${1:-}"
+  [[ -z "$version" ]] && die "version required"
+
+  local dir="$VERSIONS_DIR/$version"
+  [[ ! -d "$dir" ]] && die "Zig $version not installed"
+
+  local current_ver
+  current_ver="$(current 2>/dev/null || echo "")"
+  if [[ "$version" == "$current_ver" ]]; then
+    warn "removing currently active version"
+    rm -f "$ACTIVE_LINK" "$ZIG_SYMLINK"
+  fi
+
+  rm -rf "$dir"
+  info "removed Zig $version"
+}
+
+# AUTO (.zigversion)
+auto() {
+  local file version search_dir
+
+  # Start from current directory and search upwards
+  search_dir="$(pwd)"
+  
+  while true; do
+    for file in .zig-version .zigversion .zv; do
+      if [[ -f "$search_dir/$file" ]]; then
+        info "found version file: $search_dir/$file"
+        
+        version="$(tr -d ' \t\n\r' < "$search_dir/$file")"
+        [[ -z "$version" ]] && die "version file is empty"
+        
+        # Handle comments and get first non-comment line
+        version=$(echo "$version" | grep -v '^#' | head -n1)
+        [[ -z "$version" ]] && die "no valid version found in file (only comments)"
+        
+        info "detected version: $version"
+        
+        # Check if version exists in remote index
+        local version_exists
+        version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
+        
+        if [[ "$version_exists" != "true" ]]; then
+          warn "version '$version' not found in Zig index"
+          info "available versions:"
+          list_remote | tail -10
+          die "invalid version specified in $search_dir/$file"
+        fi
+        
+        # Install if not already installed
+        if [[ ! -d "$VERSIONS_DIR/$version" ]]; then
+          info "version $version not installed, installing..."
+          install "$version"
+        else
+          info "version $version already installed"
+        fi
+        
+        use "$version"
+        return 0
+      fi
+    done
+    
+    # Move up one directory
+    if [[ "$search_dir" == "/" ]]; then
+      break
+    fi
+    search_dir="$(dirname "$search_dir")"
+  done
+  
+  die "no .zig-version, .zigversion or .zv file found (searched up to root)"
+}
+
+# NIGHTLY
+nightly() {
+  local version
+  version="$(zig_meta | jq -r 'to_entries[] | select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+-dev")) | .key' | sort -V | tail -n1)"
+
+  [[ -z "$version" || "$version" == "null" ]] && die "no nightly version found"
+
+  info "latest nightly: $version"
+
+  [[ ! -d "$VERSIONS_DIR/$version" ]] && install "$version"
+  use "$version"
+}
+
+# ENV
+env_cmd() {
+cat <<EOF
+# Add this to your ~/.bashrc or ~/.zshrc:
+export ZIG_HOME="$ZIG_HOME"
+export PATH="$BIN_DIR:\$PATH"
+EOF
+}
+
+# DOCTOR
+doctor() {
+  echo "=== zvm doctor ==="
+  echo
+  echo "Configuration:"
+  echo "  ZIG_HOME: $ZIG_HOME"
+  echo "  BIN_DIR:  $BIN_DIR"
+  echo "  Platform: $PLATFORM"
+  echo "  Downloader: $DOWNLOADER"
+  echo
+
+  if [[ -L "$ACTIVE_LINK" ]]; then
+    echo "Active version: $(current)"
+  else
+    echo "Active version: none"
+  fi
+  echo
+
+  echo "Zig binary: $ZIG_SYMLINK"
+  if [[ -x "$ZIG_SYMLINK" ]]; then
+    echo "  ✓ exists and executable"
+    "$ZIG_SYMLINK" version 2>/dev/null || echo "  ⚠ but 'zig version' failed"
+  else
+    echo "  ✗ not found or not executable"
+  fi
+  echo
+
+  echo "PATH check:"
+  case ":$PATH:" in
+    *":$BIN_DIR:"*)
+      echo "  ✓ $BIN_DIR is in PATH"
+      ;;
+    *)
+      echo "  ✗ $BIN_DIR NOT in PATH"
+      echo "  Add this to your shell config: export PATH=\"$BIN_DIR:\$PATH\""
+      ;;
+  esac
+  echo
+
+  echo "Dependencies:"
+  for dep in jq sha256sum tar; do
+    if command -v "$dep" >/dev/null 2>&1; then
+      echo "  ✓ $dep"
+    else
+      echo "  ✗ $dep (missing)"
+    fi
+  done
+  echo
+  
+  echo "Download tools:"
+  for tool in aria2c curl wget; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      if [[ "$tool" == "$DOWNLOADER" ]]; then
+        echo "  ✓ $tool (active)"
+      else
+        echo "  ✓ $tool"
+      fi
+    else
+      echo "  - $tool (not installed)"
+    fi
+  done
+}
+
+# COMPLETIONS
+completion_install() {
+  local bash_dir="$HOME/.bash_completion.d"
+  local zsh_dir="$HOME/.config/zsh/site-functions"
+  local fish_dir="$HOME/.config/fish/completions"
+
+  mkdir -p "$bash_dir" "$zsh_dir" "$fish_dir"
+
+cat > "$bash_dir/zvm" <<'EOF'
+_zvm() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local prev="${COMP_WORDS[COMP_CWORD-1]}"
+  local cmds="install use list list-remote current remove auto nightly env doctor completion-install update-self"
+  
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    COMPREPLY=($(compgen -W "$cmds" -- "$cur"))
+  fi
+}
+complete -F _zvm zvm
+EOF
+
+cat > "$zsh_dir/_zvm" <<'EOF'
+#compdef zvm
+_zvm() {
+  local -a commands
+  commands=(
+    'install:install a Zig version'
+    'use:switch to a Zig version'
+    'list:list installed versions'
+    'list-remote:list available versions'
+    'current:show current version'
+    'remove:remove a version'
+    'auto:use version from .zigversion'
+    'nightly:install and use latest nightly'
+    'env:show environment setup'
+    'doctor:check installation'
+    'completion-install:install shell completions'
+    'update-self:update zvm'
+  )
+  _describe 'command' commands
+}
+_zvm
+EOF
+
+cat > "$fish_dir/zvm.fish" <<'EOF'
+complete -c zvm -f
+complete -c zvm -n "__fish_use_subcommand" -a install -d "Install a Zig version"
+complete -c zvm -n "__fish_use_subcommand" -a use -d "Switch to a Zig version"
+complete -c zvm -n "__fish_use_subcommand" -a list -d "List installed versions"
+complete -c zvm -n "__fish_use_subcommand" -a list-remote -d "List available versions"
+complete -c zvm -n "__fish_use_subcommand" -a current -d "Show current version"
+complete -c zvm -n "__fish_use_subcommand" -a remove -d "Remove a version"
+complete -c zvm -n "__fish_use_subcommand" -a auto -d "Use version from .zigversion"
+complete -c zvm -n "__fish_use_subcommand" -a nightly -d "Install latest nightly"
+complete -c zvm -n "__fish_use_subcommand" -a env -d "Show environment setup"
+complete -c zvm -n "__fish_use_subcommand" -a doctor -d "Check installation"
+complete -c zvm -n "__fish_use_subcommand" -a completion-install -d "Install completions"
+complete -c zvm -n "__fish_use_subcommand" -a update-self -d "Update zvm"
+EOF
+
+  info "shell completions installed"
+  info "restart your shell or source the completion files"
+}
+
+# SELF UPDATE
+update_self() {
+  local repo_url="https://codeberg.org/erffy/zvm/raw/branch/master/zvm"
+  info "updating zvm from $repo_url..."
+  
+  local tmp="$SELF_PATH.tmp"
+  case "$DOWNLOADER" in
+    aria2c)
+      if ! aria2c --console-log-level=warn --summary-interval=0 \
+        --allow-overwrite=true --auto-file-renaming=false \
+        -d "$(dirname "$tmp")" -o "$(basename "$tmp")" \
+        "$repo_url"; then
+        rm -f "$tmp"
+        die "update failed"
+      fi
+      ;;
+    curl)
+      if ! curl -fsSL --max-time 30 "$repo_url" -o "$tmp"; then
+        rm -f "$tmp"
+        die "update failed"
+      fi
+      ;;
+    wget)
+      if ! wget --timeout=30 -q -O "$tmp" "$repo_url"; then
+        rm -f "$tmp"
+        die "update failed"
+      fi
+      ;;
+  esac
+  
+  chmod +x "$tmp"
+  mv "$tmp" "$SELF_PATH"
+  info "zvm updated successfully"
+}
+
+# CLEAN CACHE
+clean() {
+  info "cleaning cache..."
+  rm -rf "$CACHE_DIR"/*
+  mkdir -p "$CACHE_DIR"
+  info "cache cleaned"
+}
+
+# USAGE
+usage() {
+cat <<EOF
+zvm - Zig Version Manager
+
+Usage: zvm <command> [arguments]
+
+Commands:
+  install <version>      Install a specific Zig version
+  use <version>          Switch to an installed version
+  list                   List installed versions
+  list-remote            List all available versions
+  current                Show currently active version
+  remove <version>       Remove an installed version
+  auto                   Use version from .zig-version file
+  nightly                Install and use latest nightly build
+  env                    Show environment setup commands
+  doctor                 Check installation and configuration
+  clean                  Clear download cache
+  completion-install     Install shell completions
+  update-self            Update zvm to latest version
+
+Examples:
+  zvm install 0.15.2     Install Zig 0.15.2
+  zvm use 0.15.2         Switch to Zig 0.15.2
+  zvm nightly            Use latest nightly build
+  zvm auto               Use version from .zig-version
+
+Environment Variables:
+  ZIG_HOME              Installation directory (default: ~/.zig)
+  ZVM_BIN_DIR           Binary directory (default: ~/.local/bin)
+  ZVM_DOWNLOADER        Force downloader: aria2c, curl, or wget (default: auto-detect)
+EOF
+}
+
+# MAIN
+main() {
+  local cmd="${1:-}"
+  
+  case "$cmd" in
+    install)
+      [[ -z "${2:-}" ]] && die "version required. Usage: zvm install <version>"
+      install "$2"
+      ;;
+    use)
+      [[ -z "${2:-}" ]] && die "version required. Usage: zvm use <version>"
+      use "$2"
+      ;;
+    list) list ;;
+    list-remote) list_remote ;;
+    current) current ;;
+    remove)
+      [[ -z "${2:-}" ]] && die "version required. Usage: zvm remove <version>"
+      remove "$2"
+      ;;
+    auto) auto ;;
+    nightly) nightly ;;
+    env) env_cmd ;;
+    doctor) doctor ;;
+    clean) clean ;;
+    completion-install) completion_install ;;
+    update-self) update_self ;;
+    -h|--help|help) usage ;;
+    "") usage; exit 1 ;;
+    *) die "unknown command: $cmd. Run 'zvm --help' for usage" ;;
+  esac
+}
+
+main "$@"
