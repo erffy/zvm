@@ -22,8 +22,14 @@ set -euo pipefail
 # Installer version for tracking
 INSTALLER_VERSION="1.0.0"
 
-# Colors for output (with fallback for non-interactive terminals)
-if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput setaf 1 >/dev/null 2>&1; then
+# Detect if running in pipe mode (stdin is not a terminal)
+PIPE_MODE=false
+if [[ ! -t 0 ]]; then
+    PIPE_MODE=true
+fi
+
+# Colors for output (disabled in pipe mode for better logging)
+if [[ "$PIPE_MODE" == false ]] && [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput setaf 1 >/dev/null 2>&1; then
     RED=$(tput setaf 1)
     GREEN=$(tput setaf 2)
     YELLOW=$(tput setaf 3)
@@ -46,7 +52,7 @@ BIN_DIR="${ZVM_BIN_DIR:-$HOME/.local/bin}"
 ZVM_SCRIPT="$ZIG_HOME/zvm"
 ZVM_SYMLINK="$BIN_DIR/zvm"
 
-# Installation log for debugging
+# Installation log
 LOG_FILE="${ZVM_LOG:-/tmp/zvm-install-$$.log}"
 exec 19>"$LOG_FILE"
 
@@ -123,9 +129,15 @@ validate_environment() {
     if [[ $EUID -eq 0 ]]; then
         warn "Running as root is not recommended"
         warn "zvm should be installed per-user, not system-wide"
-        echo -n "Continue anyway? [y/N] "
-        read -r response
-        [[ ! "$response" =~ ^[Yy]$ ]] && die "Installation cancelled"
+        
+        if [[ "$PIPE_MODE" == true ]]; then
+            # In pipe mode, default to cancelling root installation
+            die "Installation cancelled: running as root in pipe mode. Run directly if needed."
+        else
+            echo -n "Continue anyway? [y/N] "
+            read -r response
+            [[ ! "$response" =~ ^[Yy]$ ]] && die "Installation cancelled"
+        fi
     fi
     
     # Validate URLs
@@ -136,7 +148,7 @@ validate_environment() {
     # Check disk space (need at least 100MB)
     local available_space
     if command -v df >/dev/null 2>&1; then
-        available_space=$(df -k "$HOME" | awk 'NR==2 {print $4}')
+        available_space=$(df -k "$HOME" 2>/dev/null | awk 'NR==2 {print $4}') || available_space=999999
         if [[ $available_space -lt 102400 ]]; then
             die "Insufficient disk space. Need at least 100MB free in $HOME"
         fi
@@ -157,7 +169,7 @@ has_command() {
 
 # Detect downloader with fallback chain
 detect_downloader() {
-    local downloaders=("aria2c" "curl" "wget")
+    local downloaders=("curl" "wget" "aria2c")
     
     for tool in "${downloaders[@]}"; do
         if has_command "$tool"; then
@@ -169,7 +181,7 @@ detect_downloader() {
     return 1
 }
 
-# Download file with retry logic and verification
+# Download file with retry logic
 download_file() {
     local url="$1"
     local output="$2"
@@ -186,19 +198,6 @@ download_file() {
         fi
         
         case "$downloader" in
-            aria2c)
-                if aria2c --console-log-level=error --summary-interval=0 \
-                    -x 4 -s 4 --max-tries=3 --retry-wait=2 \
-                    --connect-timeout=10 --timeout=30 \
-                    --user-agent="zvm-installer/$INSTALLER_VERSION" \
-                    --allow-overwrite=true \
-                    --auto-file-renaming=false \
-                    -d "$(dirname "$output")" -o "$(basename "$output")" \
-                    "$url" >> "$LOG_FILE" 2>&1; then
-                    log "Download successful"
-                    return 0
-                fi
-                ;;
             curl)
                 if curl -fsSL --connect-timeout 10 --max-time 60 \
                     --retry 2 --retry-delay 2 \
@@ -212,6 +211,19 @@ download_file() {
                 if wget -q --timeout=30 --tries=3 --waitretry=2 \
                     --user-agent="zvm-installer/$INSTALLER_VERSION" \
                     -O "$output" "$url" >> "$LOG_FILE" 2>&1; then
+                    log "Download successful"
+                    return 0
+                fi
+                ;;
+            aria2c)
+                if aria2c --console-log-level=error --summary-interval=0 \
+                    -x 4 -s 4 --max-tries=3 --retry-wait=2 \
+                    --connect-timeout=10 --timeout=30 \
+                    --user-agent="zvm-installer/$INSTALLER_VERSION" \
+                    --allow-overwrite=true \
+                    --auto-file-renaming=false \
+                    -d "$(dirname "$output")" -o "$(basename "$output")" \
+                    "$url" >> "$LOG_FILE" 2>&1; then
                     log "Download successful"
                     return 0
                 fi
@@ -248,10 +260,15 @@ verify_script() {
     # Check for suspicious content
     if grep -qE '(eval.*base64|curl.*\|.*sh|wget.*\|.*sh)' "$script"; then
         warn "Script contains potentially dangerous patterns"
-        warn "Please review: $script"
-        echo -n "Continue anyway? [y/N] "
-        read -r response
-        [[ ! "$response" =~ ^[Yy]$ ]] && return 1
+        
+        if [[ "$PIPE_MODE" == true ]]; then
+            die "Verification failed: script contains suspicious patterns. Review manually."
+        else
+            warn "Please review: $script"
+            echo -n "Continue anyway? [y/N] "
+            read -r response
+            [[ ! "$response" =~ ^[Yy]$ ]] && return 1
+        fi
     fi
     
     # Basic syntax check
@@ -303,48 +320,35 @@ check_dependencies() {
         error "Missing required dependencies: ${missing_required[*]}"
         echo
         
-        # Detect OS and package manager
-        local os_type pkg_manager install_cmd
-        
+        # Detect OS and suggest installation command
+        local install_cmd
         if [[ -f /etc/os-release ]]; then
             . /etc/os-release
-            os_type="${ID:-unknown}"
+            case "${ID:-unknown}" in
+                arch|manjaro)
+                    install_cmd="sudo pacman -S ${missing_required[*]}"
+                    ;;
+                ubuntu|debian|pop|linuxmint)
+                    install_cmd="sudo apt update && sudo apt install ${missing_required[*]}"
+                    ;;
+                fedora|rhel|centos)
+                    install_cmd="sudo dnf install ${missing_required[*]}"
+                    ;;
+                opensuse*)
+                    install_cmd="sudo zypper install ${missing_required[*]}"
+                    ;;
+                alpine)
+                    install_cmd="sudo apk add ${missing_required[*]}"
+                    ;;
+                *)
+                    install_cmd="Use your package manager to install: ${missing_required[*]}"
+                    ;;
+            esac
         elif [[ "$OSTYPE" == "darwin"* ]]; then
-            os_type="macos"
+            install_cmd="brew install ${missing_required[*]}"
         else
-            os_type="unknown"
+            install_cmd="Use your package manager to install: ${missing_required[*]}"
         fi
-        
-        case "$os_type" in
-            arch|manjaro)
-                pkg_manager="pacman"
-                install_cmd="sudo pacman -S ${missing_required[*]}"
-                ;;
-            ubuntu|debian|pop|linuxmint)
-                pkg_manager="apt"
-                install_cmd="sudo apt update && sudo apt install ${missing_required[*]}"
-                ;;
-            fedora|rhel|centos)
-                pkg_manager="dnf"
-                install_cmd="sudo dnf install ${missing_required[*]}"
-                ;;
-            opensuse*)
-                pkg_manager="zypper"
-                install_cmd="sudo zypper install ${missing_required[*]}"
-                ;;
-            alpine)
-                pkg_manager="apk"
-                install_cmd="sudo apk add ${missing_required[*]}"
-                ;;
-            macos)
-                pkg_manager="brew"
-                install_cmd="brew install ${missing_required[*]}"
-                ;;
-            *)
-                pkg_manager="unknown"
-                install_cmd="Use your system's package manager to install: ${missing_required[*]}"
-                ;;
-        esac
         
         echo "Install them with:"
         echo "  $install_cmd"
@@ -400,11 +404,7 @@ get_shell_config() {
             fi
             ;;
         zsh)
-            if [[ -f "$HOME/.zshrc" ]]; then
-                config_file="$HOME/.zshrc"
-            else
-                config_file="$HOME/.zshrc"  # Create new
-            fi
+            config_file="${ZDOTDIR:-$HOME}/.zshrc"
             ;;
         fish)
             config_file="$HOME/.config/fish/config.fish"
@@ -578,6 +578,12 @@ show_instructions() {
 
 # Interactive completion installation
 install_completions() {
+    if [[ "$PIPE_MODE" == true ]]; then
+        # Skip interactive prompt in pipe mode
+        info "Shell completions can be installed later with: zvm completion-install"
+        return
+    fi
+    
     echo
     echo -n "Install shell completions? [Y/n] "
     read -r response
@@ -604,6 +610,7 @@ main() {
     
     log "=== Installation started ==="
     log "Installer version: $INSTALLER_VERSION"
+    log "Pipe mode: $PIPE_MODE"
     log "ZVM_URL: $ZVM_URL"
     log "ZIG_HOME: $ZIG_HOME"
     log "BIN_DIR: $BIN_DIR"
