@@ -775,7 +775,7 @@ cat > "$bash_dir/zix" <<'EOF'
 _zix() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
-  local cmds="install use list list-remote current remove auto nightly env doctor clean completion-install update-self"
+  local cmds="install use switch list list-remote current remove auto nightly env doctor clean completion-install update-self"
   
   if [[ $COMP_CWORD -eq 1 ]]; then
     COMPREPLY=($(compgen -W "$cmds" -- "$cur"))
@@ -810,6 +810,7 @@ _zix() {
   commands=(
     'install:install a Zig version'
     'use:switch to a Zig version'
+    'switch:switch to a Zig version'
     'list:list installed versions'
     'list-remote:list available versions'
     'current:show current version'
@@ -854,6 +855,7 @@ cat > "$fish_dir/zix.fish" <<'EOF'
 complete -c zix -f
 complete -c zix -n "__fish_use_subcommand" -a install -d "Install a Zig version"
 complete -c zix -n "__fish_use_subcommand" -a use -d "Switch to a Zig version"
+complete -c zix -n "__fish_use_subcommand" -a switch -d "Switch to a Zig version"
 complete -c zix -n "__fish_use_subcommand" -a list -d "List installed versions"
 complete -c zix -n "__fish_use_subcommand" -a list-remote -d "List available versions"
 complete -c zix -n "__fish_use_subcommand" -a current -d "Show current version"
@@ -911,6 +913,7 @@ Usage: zix <command> [arguments]
 Commands:
   install <version>      Install a specific Zig version
   use <version>          Switch to an installed version
+  switch <version>       Switch to an installed version (alias to use)
   list                   List installed versions
   list-remote            List all available versions
   current                Show currently active version
@@ -945,8 +948,8 @@ main() {
       [[ -z "${2:-}" ]] && die "version required. Usage: zix install <version>"
       install "$2"
       ;;
-    use)
-      [[ -z "${2:-}" ]] && die "version required. Usage: zix use <version>"
+    use|switch)
+      [[ -z "${2:-}" ]] && die "version required. Usage: zix $1 <version>"
       use "$2"
       ;;
     list) list ;;
