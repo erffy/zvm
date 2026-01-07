@@ -24,7 +24,7 @@ ZIG_HOME="${ZIG_HOME:-$HOME/.zig}"
 VERSIONS_DIR="$ZIG_HOME/versions"
 CACHE_DIR="$ZIG_HOME/cache"
 ACTIVE_LINK="$ZIG_HOME/active"
-BIN_DIR="${ZVM_BIN_DIR:-$HOME/.local/bin}"
+BIN_DIR="${ZIX_BIN_DIR:-$HOME/.local/bin}"
 ZIG_SYMLINK="$BIN_DIR/zig"
 SELF_PATH="${BASH_SOURCE[0]}"
 
@@ -50,7 +50,7 @@ case "$ARCH" in
   powerpc64|ppc64) ARCH="powerpc64" ;;
   s390x) ARCH="s390x" ;;
   loongarch64) ARCH="loongarch64" ;;
-  *) echo "zvm: unsupported architecture: $ARCH" >&2; exit 1 ;;
+  *) echo "zix: unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
 case "$OS" in
@@ -59,7 +59,7 @@ case "$OS" in
   freebsd) OS="freebsd" ;;
   netbsd) OS="netbsd" ;;
   mingw*|msys*|cygwin*) OS="windows" ;;
-  *) echo "zvm: unsupported OS: $OS" >&2; exit 1 ;;
+  *) echo "zix: unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
 # Platform key format used by Zig: ARCH-OS (e.g., x86_64-linux)
@@ -138,18 +138,18 @@ fetch_url() {
 # Check for download tools (at least one required)
 detect_downloader() {
   # Allow user to force a specific downloader via environment variable
-  if [[ -n "${ZVM_DOWNLOADER:-}" ]]; then
-    case "$ZVM_DOWNLOADER" in
+  if [[ -n "${ZIX_DOWNLOADER:-}" ]]; then
+    case "$ZIX_DOWNLOADER" in
       aria2c|curl|wget)
-        if command -v "$ZVM_DOWNLOADER" >/dev/null 2>&1; then
-          echo "$ZVM_DOWNLOADER"
+        if command -v "$ZIX_DOWNLOADER" >/dev/null 2>&1; then
+          echo "$ZIX_DOWNLOADER"
           return 0
         else
-          warn "ZVM_DOWNLOADER set to '$ZVM_DOWNLOADER' but not found, falling back to auto-detect"
+          warn "ZIX_DOWNLOADER set to '$ZIX_DOWNLOADER' but not found, falling back to auto-detect"
         fi
         ;;
       *)
-        warn "invalid ZVM_DOWNLOADER='$ZVM_DOWNLOADER', falling back to auto-detect"
+        warn "invalid ZIX_DOWNLOADER='$ZIX_DOWNLOADER', falling back to auto-detect"
         ;;
     esac
   fi
@@ -294,7 +294,7 @@ pick_mirror() {
 # CORE COMMANDS
 install() {
   local version="$1"
-  [[ -z "$version" ]] && die "version required (e.g., 'zvm install 0.11.0' or 'zvm install master')"
+  [[ -z "$version" ]] && die "version required (e.g., 'zix install 0.11.0' or 'zix install master')"
 
   local dir="$VERSIONS_DIR/$version"
   
@@ -347,7 +347,7 @@ install() {
   local version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
   
   if [[ "$version_exists" != "true" ]]; then
-    die "version '$version' not found. Use 'zvm list-remote' to see available versions"
+    die "version '$version' not found. Use 'zix list-remote' to see available versions"
   fi
 
   local tarball shasum
@@ -434,10 +434,10 @@ install() {
 
 use() {
   local version="${1:-}"
-  [[ -z "$version" ]] && die "version required (e.g., 'zvm use 0.15.2')"
+  [[ -z "$version" ]] && die "version required (e.g., 'zix use 0.15.2')"
 
   local dir="$VERSIONS_DIR/$version"
-  [[ ! -d "$dir" ]] && die "Zig $version not installed. Run 'zvm install $version' first"
+  [[ ! -d "$dir" ]] && die "Zig $version not installed. Run 'zix install $version' first"
 
   ln -sfn "$dir" "$ACTIVE_LINK"
   ln -sfn "$ACTIVE_LINK/zig" "$ZIG_SYMLINK"
@@ -759,7 +759,7 @@ doctor() {
   echo "  Shell: ${SHELL##*/}"
   
   if [[ -f "$SELF_PATH" ]]; then
-    echo "  zvm: $SELF_PATH"
+    echo "  zix: $SELF_PATH"
   fi
 }
 
@@ -771,8 +771,8 @@ completion_install() {
 
   mkdir -p "$bash_dir" "$zsh_dir" "$fish_dir"
 
-cat > "$bash_dir/zvm" <<'EOF'
-_zvm() {
+cat > "$bash_dir/zix" <<'EOF'
+_zix() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
   local cmds="install use list list-remote current remove auto nightly env doctor clean completion-install update-self"
@@ -800,12 +800,12 @@ _zvm() {
     esac
   fi
 }
-complete -F _zvm zvm
+complete -F _zix zix
 EOF
 
-cat > "$zsh_dir/_zvm" <<'EOF'
-#compdef zvm
-_zvm() {
+cat > "$zsh_dir/_zix" <<'EOF'
+#compdef zix
+_zix() {
   local -a commands
   commands=(
     'install:install a Zig version'
@@ -820,7 +820,7 @@ _zvm() {
     'doctor:check installation'
     'clean:clear download cache'
     'completion-install:install shell completions'
-    'update-self:update zvm'
+    'update-self:update zix'
   )
   
   case $CURRENT in
@@ -847,30 +847,30 @@ _zvm() {
       ;;
   esac
 }
-_zvm
+_zix
 EOF
 
-cat > "$fish_dir/zvm.fish" <<'EOF'
-complete -c zvm -f
-complete -c zvm -n "__fish_use_subcommand" -a install -d "Install a Zig version"
-complete -c zvm -n "__fish_use_subcommand" -a use -d "Switch to a Zig version"
-complete -c zvm -n "__fish_use_subcommand" -a list -d "List installed versions"
-complete -c zvm -n "__fish_use_subcommand" -a list-remote -d "List available versions"
-complete -c zvm -n "__fish_use_subcommand" -a current -d "Show current version"
-complete -c zvm -n "__fish_use_subcommand" -a remove -d "Remove a version"
-complete -c zvm -n "__fish_use_subcommand" -a auto -d "Use version from .zigversion"
-complete -c zvm -n "__fish_use_subcommand" -a nightly -d "Install latest nightly"
-complete -c zvm -n "__fish_use_subcommand" -a env -d "Show environment setup"
-complete -c zvm -n "__fish_use_subcommand" -a doctor -d "Check installation"
-complete -c zvm -n "__fish_use_subcommand" -a clean -d "Clear download cache"
-complete -c zvm -n "__fish_use_subcommand" -a completion-install -d "Install completions"
-complete -c zvm -n "__fish_use_subcommand" -a update-self -d "Update zvm"
+cat > "$fish_dir/zix.fish" <<'EOF'
+complete -c zix -f
+complete -c zix -n "__fish_use_subcommand" -a install -d "Install a Zig version"
+complete -c zix -n "__fish_use_subcommand" -a use -d "Switch to a Zig version"
+complete -c zix -n "__fish_use_subcommand" -a list -d "List installed versions"
+complete -c zix -n "__fish_use_subcommand" -a list-remote -d "List available versions"
+complete -c zix -n "__fish_use_subcommand" -a current -d "Show current version"
+complete -c zix -n "__fish_use_subcommand" -a remove -d "Remove a version"
+complete -c zix -n "__fish_use_subcommand" -a auto -d "Use version from .zigversion"
+complete -c zix -n "__fish_use_subcommand" -a nightly -d "Install latest nightly"
+complete -c zix -n "__fish_use_subcommand" -a env -d "Show environment setup"
+complete -c zix -n "__fish_use_subcommand" -a doctor -d "Check installation"
+complete -c zix -n "__fish_use_subcommand" -a clean -d "Clear download cache"
+complete -c zix -n "__fish_use_subcommand" -a completion-install -d "Install completions"
+complete -c zix -n "__fish_use_subcommand" -a update-self -d "Update zix"
 
 # Complete versions for install command (remote versions)
-complete -c zvm -n "__fish_seen_subcommand_from install" -f -a "(test -f ~/.zig/cache/index.json && jq -r 'keys[]' ~/.zig/cache/index.json 2>/dev/null | sort -V)"
+complete -c zix -n "__fish_seen_subcommand_from install" -f -a "(test -f ~/.zig/cache/index.json && jq -r 'keys[]' ~/.zig/cache/index.json 2>/dev/null | sort -V)"
 
 # Complete versions for use/remove commands (local versions)
-complete -c zvm -n "__fish_seen_subcommand_from use remove" -f -a "(test -d ~/.zig/versions && ls -1 ~/.zig/versions 2>/dev/null)"
+complete -c zix -n "__fish_seen_subcommand_from use remove" -f -a "(test -d ~/.zig/versions && ls -1 ~/.zig/versions 2>/dev/null)"
 EOF
 
   info "shell completions installed"
@@ -879,8 +879,8 @@ EOF
 
 # SELF UPDATE
 update_self() {
-  local repo_url="https://codeberg.org/erffy/zvm/raw/branch/master/zvm"
-  info "updating zvm from $repo_url..."
+  local repo_url="https://codeberg.org/erffy/zix/raw/branch/master/zix"
+  info "updating zix from $repo_url..."
   
   local tmp="$SELF_PATH.tmp"
   if ! fetch_url "$repo_url" "$tmp" 30; then
@@ -890,7 +890,7 @@ update_self() {
   
   chmod +x "$tmp"
   mv "$tmp" "$SELF_PATH"
-  info "zvm updated successfully"
+  info "zix updated successfully"
 }
 
 # CLEAN CACHE
@@ -904,9 +904,9 @@ clean() {
 # USAGE
 usage() {
 cat <<EOF
-zvm - Zig Version Manager
+zix - Zig Version Manager
 
-Usage: zvm <command> [arguments]
+Usage: zix <command> [arguments]
 
 Commands:
   install <version>      Install a specific Zig version
@@ -921,18 +921,18 @@ Commands:
   doctor                 Check installation and configuration
   clean                  Clear download cache
   completion-install     Install shell completions
-  update-self            Update zvm to latest version
+  update-self            Update zix to latest version
 
 Examples:
-  zvm install 0.15.2     Install Zig 0.15.2
-  zvm use 0.15.2         Switch to Zig 0.15.2
-  zvm nightly            Use latest nightly build
-  zvm auto               Use version from .zig-version
+  zix install 0.15.2     Install Zig 0.15.2
+  zix use 0.15.2         Switch to Zig 0.15.2
+  zix nightly            Use latest nightly build
+  zix auto               Use version from .zig-version
 
 Environment Variables:
   ZIG_HOME              Installation directory (default: ~/.zig)
-  ZVM_BIN_DIR           Binary directory (default: ~/.local/bin)
-  ZVM_DOWNLOADER        Force downloader: aria2c, curl, or wget (default: auto-detect)
+  ZIX_BIN_DIR           Binary directory (default: ~/.local/bin)
+  ZIX_DOWNLOADER        Force downloader: aria2c, curl, or wget (default: auto-detect)
 EOF
 }
 
@@ -942,18 +942,18 @@ main() {
   
   case "$cmd" in
     install)
-      [[ -z "${2:-}" ]] && die "version required. Usage: zvm install <version>"
+      [[ -z "${2:-}" ]] && die "version required. Usage: zix install <version>"
       install "$2"
       ;;
     use)
-      [[ -z "${2:-}" ]] && die "version required. Usage: zvm use <version>"
+      [[ -z "${2:-}" ]] && die "version required. Usage: zix use <version>"
       use "$2"
       ;;
     list) list ;;
     list-remote) list_remote ;;
     current) current ;;
     remove|uninstall)
-      [[ -z "${2:-}" ]] && die "version required. Usage: zvm remove <version>"
+      [[ -z "${2:-}" ]] && die "version required. Usage: zix remove <version>"
       remove "$2"
       ;;
     auto) auto ;;
@@ -965,7 +965,7 @@ main() {
     update-self) update_self ;;
     -h|--help|help) usage ;;
     "") usage; exit 1 ;;
-    *) die "unknown command: $cmd. Run 'zvm --help' for usage" ;;
+    *) die "unknown command: $cmd. Run 'zix --help' for usage" ;;
   esac
 }
 

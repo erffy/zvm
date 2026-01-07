@@ -46,14 +46,14 @@ else
 fi
 
 # Configuration with validation
-ZVM_URL="https://codeberg.org/erffy/zvm/raw/branch/master/zvm"
+ZIX_URL="https://codeberg.org/erffy/zix/raw/branch/master/zix"
 ZIG_HOME="${ZIG_HOME:-$HOME/.zig}"
-BIN_DIR="${ZVM_BIN_DIR:-$HOME/.local/bin}"
-ZVM_SCRIPT="$ZIG_HOME/zvm"
-ZVM_SYMLINK="$BIN_DIR/zvm"
+BIN_DIR="${ZIX_BIN_DIR:-$HOME/.local/bin}"
+ZIX_SCRIPT="$ZIG_HOME/zix"
+ZIX_SYMLINK="$BIN_DIR/zix"
 
 # Installation log
-LOG_FILE="${ZVM_LOG:-/tmp/zvm-install-$$.log}"
+LOG_FILE="${ZIX_LOG:-/tmp/zix-install-$$.log}"
 exec 19>"$LOG_FILE"
 
 # Logging functions
@@ -128,7 +128,7 @@ validate_environment() {
     # Check if running as root (not recommended)
     if [[ $EUID -eq 0 ]]; then
         warn "Running as root is not recommended"
-        warn "zvm should be installed per-user, not system-wide"
+        warn "zix should be installed per-user, not system-wide"
         
         if [[ "$PIPE_MODE" == true ]]; then
             # In pipe mode, default to cancelling root installation
@@ -141,8 +141,8 @@ validate_environment() {
     fi
     
     # Validate URLs
-    if [[ ! "$ZVM_URL" =~ ^https?:// ]]; then
-        die "Invalid ZVM_URL: must start with http:// or https://"
+    if [[ ! "$ZIX_URL" =~ ^https?:// ]]; then
+        die "Invalid ZIX_URL: must start with http:// or https://"
     fi
     
     # Check disk space (need at least 100MB)
@@ -201,7 +201,7 @@ download_file() {
             curl)
                 if curl -fsSL --connect-timeout 10 --max-time 60 \
                     --retry 2 --retry-delay 2 \
-                    -A "zvm-installer/$INSTALLER_VERSION" \
+                    -A "zix-installer/$INSTALLER_VERSION" \
                     "$url" -o "$output" >> "$LOG_FILE" 2>&1; then
                     log "Download successful"
                     return 0
@@ -209,7 +209,7 @@ download_file() {
                 ;;
             wget)
                 if wget -q --timeout=30 --tries=3 --waitretry=2 \
-                    --user-agent="zvm-installer/$INSTALLER_VERSION" \
+                    --user-agent="zix-installer/$INSTALLER_VERSION" \
                     -O "$output" "$url" >> "$LOG_FILE" 2>&1; then
                     log "Download successful"
                     return 0
@@ -219,7 +219,7 @@ download_file() {
                 if aria2c --console-log-level=error --summary-interval=0 \
                     -x 4 -s 4 --max-tries=3 --retry-wait=2 \
                     --connect-timeout=10 --timeout=30 \
-                    --user-agent="zvm-installer/$INSTALLER_VERSION" \
+                    --user-agent="zix-installer/$INSTALLER_VERSION" \
                     --allow-overwrite=true \
                     --auto-file-renaming=false \
                     -d "$(dirname "$output")" -o "$(basename "$output")" \
@@ -448,7 +448,7 @@ setup_path() {
     fi
     
     # Check if already configured
-    if [[ -f "$config_file" ]] && grep -q "# zvm - Zig Version Manager" "$config_file" 2>/dev/null; then
+    if [[ -f "$config_file" ]] && grep -q "# zix - Zig Version Manager" "$config_file" 2>/dev/null; then
         success "PATH already configured in $config_file"
         return 0
     fi
@@ -467,8 +467,8 @@ setup_path() {
     # Add PATH configuration with idempotency guard
     {
         echo ""
-        echo "# zvm - Zig Version Manager"
-        echo "# Added by zvm installer on $(date +'%Y-%m-%d %H:%M:%S')"
+        echo "# zix - Zig Version Manager"
+        echo "# Added by zix installer on $(date +'%Y-%m-%d %H:%M:%S')"
         
         if [[ "$shell_type" == "fish" ]]; then
             echo "if not contains $BIN_DIR \$PATH"
@@ -490,27 +490,27 @@ setup_path() {
 verify_installation() {
     info "Verifying installation..."
     
-    # Check if zvm script exists
-    if [[ ! -f "$ZVM_SCRIPT" ]]; then
-        error "zvm script not found at $ZVM_SCRIPT"
+    # Check if zix script exists
+    if [[ ! -f "$ZIX_SCRIPT" ]]; then
+        error "zix script not found at $ZIX_SCRIPT"
         return 1
     fi
     
     # Check if executable
-    if [[ ! -x "$ZVM_SCRIPT" ]]; then
-        error "zvm script is not executable"
+    if [[ ! -x "$ZIX_SCRIPT" ]]; then
+        error "zix script is not executable"
         return 1
     fi
     
     # Check symlink
-    if [[ ! -L "$ZVM_SYMLINK" ]]; then
-        error "zvm symlink not found at $ZVM_SYMLINK"
+    if [[ ! -L "$ZIX_SYMLINK" ]]; then
+        error "zix symlink not found at $ZIX_SYMLINK"
         return 1
     fi
     
     # Verify symlink target
-    if [[ "$(readlink "$ZVM_SYMLINK")" != "$ZVM_SCRIPT" ]]; then
-        error "zvm symlink points to wrong target"
+    if [[ "$(readlink "$ZIX_SYMLINK")" != "$ZIX_SCRIPT" ]]; then
+        error "zix symlink points to wrong target"
         return 1
     fi
     
@@ -549,30 +549,30 @@ show_instructions() {
     echo
     
     echo "  2. Verify installation:"
-    echo "     zvm doctor"
+    echo "     zix doctor"
     echo
     
     echo "  3. Install Zig:"
-    echo "     zvm install 0.13.0        # Install specific version"
-    echo "     zvm nightly               # Install latest nightly"
-    echo "     zvm list-remote           # See all available versions"
+    echo "     zix install 0.13.0        # Install specific version"
+    echo "     zix nightly               # Install latest nightly"
+    echo "     zix list-remote           # See all available versions"
     echo
     
     echo "  4. Use a version:"
-    echo "     zvm use 0.13.0"
-    echo "     zvm auto                  # Use version from .zig-version"
+    echo "     zix use 0.13.0"
+    echo "     zix auto                  # Use version from .zig-version"
     echo
     
     info "Useful commands:"
     echo
-    echo "  zvm list                      # List installed versions"
-    echo "  zvm current                   # Show current version"
-    echo "  zvm remove <version>          # Remove a version"
-    echo "  zvm --help                    # Show all commands"
+    echo "  zix list                      # List installed versions"
+    echo "  zix current                   # Show current version"
+    echo "  zix remove <version>          # Remove a version"
+    echo "  zix --help                    # Show all commands"
     echo
     
     info "Documentation:"
-    echo "  https://codeberg.org/erffy/zvm"
+    echo "  https://codeberg.org/erffy/zix"
     echo
 }
 
@@ -580,7 +580,7 @@ show_instructions() {
 install_completions() {
     if [[ "$PIPE_MODE" == true ]]; then
         # Skip interactive prompt in pipe mode
-        info "Shell completions can be installed later with: zvm completion-install"
+        info "Shell completions can be installed later with: zix completion-install"
         return
     fi
     
@@ -592,15 +592,15 @@ install_completions() {
     if [[ "$response" =~ ^[Yy]$ ]]; then
         echo
         info "Installing shell completions..."
-        if "$ZVM_SYMLINK" completion-install >> "$LOG_FILE" 2>&1; then
+        if "$ZIX_SYMLINK" completion-install >> "$LOG_FILE" 2>&1; then
             success "Shell completions installed"
             warn "Restart your shell to activate completions"
         else
             warn "Failed to install shell completions"
-            warn "You can install them later with: zvm completion-install"
+            warn "You can install them later with: zix completion-install"
         fi
     else
-        info "Skipped shell completions (install later with: zvm completion-install)"
+        info "Skipped shell completions (install later with: zix completion-install)"
     fi
 }
 
@@ -611,7 +611,7 @@ main() {
     log "=== Installation started ==="
     log "Installer version: $INSTALLER_VERSION"
     log "Pipe mode: $PIPE_MODE"
-    log "ZVM_URL: $ZVM_URL"
+    log "ZIX_URL: $ZIX_URL"
     log "ZIG_HOME: $ZIG_HOME"
     log "BIN_DIR: $BIN_DIR"
     log "Shell: $SHELL"
@@ -621,7 +621,7 @@ main() {
     # Validate environment
     validate_environment
     
-    info "Installing zvm (Zig Version Manager)..."
+    info "Installing zix (Zig Version Manager)..."
     echo
     
     # Check dependencies first
@@ -645,13 +645,13 @@ main() {
     success "Created $BIN_DIR"
     echo
     
-    # Download zvm script
-    info "Downloading zvm from $ZVM_URL..."
-    local tmp_script="$ZVM_SCRIPT.tmp"
+    # Download zix script
+    info "Downloading zix from $ZIX_URL..."
+    local tmp_script="$ZIX_SCRIPT.tmp"
     
-    if ! download_file "$ZVM_URL" "$tmp_script" "$downloader"; then
+    if ! download_file "$ZIX_URL" "$tmp_script" "$downloader"; then
         rm -f "$tmp_script"
-        die "Failed to download zvm script"
+        die "Failed to download zix script"
     fi
     
     # Verify downloaded script
@@ -661,29 +661,29 @@ main() {
     fi
     
     # Backup existing installation
-    if [[ -f "$ZVM_SCRIPT" ]]; then
-        backup_file "$ZVM_SCRIPT" >/dev/null
+    if [[ -f "$ZIX_SCRIPT" ]]; then
+        backup_file "$ZIX_SCRIPT" >/dev/null
         info "Backed up existing installation"
     fi
     
     # Move to final location
-    mv "$tmp_script" "$ZVM_SCRIPT"
-    success "Downloaded and verified zvm"
+    mv "$tmp_script" "$ZIX_SCRIPT"
+    success "Downloaded and verified zix"
     echo
     
-    # Setup zvm
-    info "Setting up zvm..."
-    chmod +x "$ZVM_SCRIPT" || die "Failed to make zvm executable"
-    success "Made zvm executable"
+    # Setup zix
+    info "Setting up zix..."
+    chmod +x "$ZIX_SCRIPT" || die "Failed to make zix executable"
+    success "Made zix executable"
     
     # Create or update symlink
-    if [[ -L "$ZVM_SYMLINK" ]] || [[ -f "$ZVM_SYMLINK" ]]; then
-        rm -f "$ZVM_SYMLINK"
+    if [[ -L "$ZIX_SYMLINK" ]] || [[ -f "$ZIX_SYMLINK" ]]; then
+        rm -f "$ZIX_SYMLINK"
     fi
-    if ! ln -sf "$ZVM_SCRIPT" "$ZVM_SYMLINK" 2>>"$LOG_FILE"; then
+    if ! ln -sf "$ZIX_SCRIPT" "$ZIX_SYMLINK" 2>>"$LOG_FILE"; then
         die "Failed to create symlink"
     fi
-    success "Created symlink: $ZVM_SYMLINK -> $ZVM_SCRIPT"
+    success "Created symlink: $ZIX_SYMLINK -> $ZIX_SCRIPT"
     echo
     
     # Verify installation

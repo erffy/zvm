@@ -1,6 +1,7 @@
-# ZVM - Zig Version Manager
+# ZIX - Zig Version Manager
 
-A fast, lightweight, and powerful Zig version manager written in pure Bash. Manage multiple Zig versions effortlessly with intelligent caching, parallel downloads, and automatic version detection.
+A fast, lightweight, and powerful Zig version manager written in pure Bash.<br>
+Manage multiple Zig versions effortlessly with intelligent caching, parallel downloads, and automatic version detection.
 
 ## Features
 
@@ -19,17 +20,17 @@ A fast, lightweight, and powerful Zig version manager written in pure Bash. Mana
 ## Installation
 
 ```bash
-curl -fsSL https://codeberg.org/erffy/zvm/raw/branch/master/install.sh | bash
+curl -fsSL https://codeberg.org/erffy/zix/raw/branch/master/install.sh | bash
 ```
 
 ### Custom Installation
 
 ```bash
 # Custom directories
-ZIG_HOME=/opt/zig ZVM_BIN_DIR=/usr/local/bin ./install.sh
+ZIG_HOME=/opt/zig ZIX_BIN_DIR=/usr/local/bin ./install.sh
 
 # Force specific downloader
-ZVM_DOWNLOADER=aria2c ./install.sh
+ZIX_DOWNLOADER=aria2c ./install.sh
 ```
 
 ### Manual Installation
@@ -38,12 +39,12 @@ ZVM_DOWNLOADER=aria2c ./install.sh
 # Create directories
 mkdir -p ~/.zig ~/.local/bin
 
-# Download zvm
-curl -fsSL https://codeberg.org/erffy/zvm/raw/branch/master/zvm -o ~/.zig/zvm.sh
-chmod +x ~/.zig/zvm.sh
+# Download zix
+curl -fsSL https://codeberg.org/erffy/zix/raw/branch/master/zix -o ~/.zig/zix.sh
+chmod +x ~/.zig/zix.sh
 
 # Create symlink
-ln -sf ~/.zig/zvm.sh ~/.local/bin/zvm
+ln -sf ~/.zig/zix.sh ~/.local/bin/zix
 
 # Add to PATH (add to your shell config)
 export PATH="$HOME/.local/bin:$PATH"
@@ -92,16 +93,16 @@ brew install jq aria2
 
 ```bash
 # Verify installation
-zvm doctor
+zix doctor
 
 # Install latest stable version
-zvm install 0.13.0
+zix install 0.13.0
 
 # Or install latest nightly
-zvm nightly
+zix nightly
 
 # Switch to a version
-zvm use 0.13.0
+zix use 0.13.0
 
 # Verify it's working
 zig version
@@ -113,24 +114,24 @@ zig version
 
 ```bash
 # Install a specific version
-zvm install 0.13.0
-zvm install 0.11.0
-zvm install master      # Development version
+zix install 0.13.0
+zix install 0.11.0
+zix install master      # Development version
 
 # List installed versions
-zvm list
+zix list
 
 # List all available versions
-zvm list-remote
+zix list-remote
 
 # Use a specific version
-zvm use 0.13.0
+zix use 0.13.0
 
 # Show current version
-zvm current
+zix current
 
 # Remove a version
-zvm remove 0.11.0
+zix remove 0.11.0
 ```
 
 ### Project Version Management
@@ -144,10 +145,10 @@ echo "0.13.0" > .zigversion
 Then use auto-detection:
 
 ```bash
-zvm auto
+zix auto
 ```
 
-ZVM will search up the directory tree to find the version file, automatically install if needed, and activate it.
+ZIX will search up the directory tree to find the version file, automatically install if needed, and activate it.
 
 **Supported version files:**
 - `.zig-version`
@@ -158,7 +159,7 @@ ZVM will search up the directory tree to find the version file, automatically in
 
 ```bash
 # Install and use latest nightly
-zvm nightly
+zix nightly
 
 # Nightly versions are named like: 0.14.0-dev.1234+hash
 ```
@@ -167,19 +168,19 @@ zvm nightly
 
 ```bash
 # Check installation and configuration
-zvm doctor
+zix doctor
 
 # Show environment setup
-zvm env
+zix env
 
 # Clean download cache
-zvm clean
+zix clean
 
 # Install shell completions
-zvm completion-install
+zix completion-install
 
-# Update zvm itself
-zvm update-self
+# Update zix itself
+zix update-self
 ```
 
 ## Configuration
@@ -189,21 +190,21 @@ zvm update-self
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ZIG_HOME` | Installation directory | `~/.zig` |
-| `ZVM_BIN_DIR` | Binary directory | `~/.local/bin` |
-| `ZVM_DOWNLOADER` | Force downloader: `aria2c`, `curl`, or `wget` | Auto-detect |
+| `ZIX_BIN_DIR` | Binary directory | `~/.local/bin` |
+| `ZIX_DOWNLOADER` | Force downloader: `aria2c`, `curl`, or `wget` | Auto-detect |
 
 ### Examples
 
 ```bash
 # Use custom installation directory
 export ZIG_HOME="/opt/zig"
-zvm install 0.13.0
+zix install 0.13.0
 
 # Force curl for downloads (useful in restricted environments)
-ZVM_DOWNLOADER=curl zvm install master
+ZIX_DOWNLOADER=curl zix install master
 
 # Use custom binary location
-export ZVM_BIN_DIR="/usr/local/bin"
+export ZIX_BIN_DIR="/usr/local/bin"
 ```
 
 ## Shell Integration
@@ -226,7 +227,7 @@ fish_add_path "$HOME/.local/bin"
 
 ```bash
 # Install completions for your shell
-zvm completion-install
+zix completion-install
 
 # Restart your shell or reload config
 source ~/.bashrc  # or ~/.zshrc or ~/.config/fish/config.fish
@@ -234,7 +235,7 @@ source ~/.bashrc  # or ~/.zshrc or ~/.config/fish/config.fish
 
 ## Performance
 
-ZVM is designed for speed:
+ZIX is designed for speed:
 
 - **Parallel Downloads**: aria2c uses up to 16 connections
 - **Smart Caching**: 6-hour TTL reduces redundant API calls
@@ -249,10 +250,10 @@ ZVM is designed for speed:
 
 ```bash
 # Check what's wrong
-zvm doctor
+zix doctor
 
 # Check installation log (during install)
-cat /tmp/zvm-install-*.log
+cat /tmp/zix-install-*.log
 
 # Verify dependencies
 command -v jq tar sha256sum curl
@@ -260,7 +261,7 @@ command -v jq tar sha256sum curl
 
 ### Common Issues
 
-**Problem:** `zvm: command not found`
+**Problem:** `zix: command not found`
 ```bash
 # Ensure ~/.local/bin is in PATH
 echo $PATH | grep -q "$HOME/.local/bin" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -270,25 +271,25 @@ source ~/.bashrc
 **Problem:** Download fails
 ```bash
 # Try different downloader
-ZVM_DOWNLOADER=wget zvm install 0.13.0
+ZIX_DOWNLOADER=wget zix install 0.13.0
 
 # Or clear cache and retry
-zvm clean
-zvm install 0.13.0
+zix clean
+zix install 0.13.0
 ```
 
 **Problem:** Version not found
 ```bash
 # List available versions
-zvm list-remote
+zix list-remote
 
 # Install specific version
-zvm install 0.13.0
+zix install 0.13.0
 ```
 
 **Problem:** Permission denied
 ```bash
-# Don't run as root - zvm is per-user
+# Don't run as root - zix is per-user
 # Ensure home directory is writable
 ls -ld ~
 ```
@@ -296,11 +297,11 @@ ls -ld ~
 ## Updating
 
 ```bash
-# Update zvm itself
-zvm update-self
+# Update zix itself
+zix update-self
 
 # Update to latest nightly
-zvm nightly
+zix nightly
 ```
 
 ## Uninstallation
@@ -309,12 +310,12 @@ zvm nightly
 # Remove all installed Zig versions
 rm -rf ~/.zig
 
-# Remove zvm
-rm -f ~/.local/bin/zvm
+# Remove zix
+rm -f ~/.local/bin/zix
 
 # Remove from shell config (manual)
 # Edit ~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish
-# Remove the zvm PATH export line
+# Remove the zix PATH export line
 ```
 
 ## Version File Format
