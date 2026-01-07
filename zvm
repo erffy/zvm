@@ -520,7 +520,6 @@ remove() {
 }
 
 # AUTO (.zigversion)
-# AUTO (.zigversion)
 auto() {
   local file version search_dir
 
@@ -609,31 +608,87 @@ EOF
 
 # DOCTOR
 doctor() {
-  echo "=== zvm doctor ==="
-  echo
   echo "Configuration:"
-  echo "  ZIG_HOME: $ZIG_HOME"
-  echo "  BIN_DIR:  $BIN_DIR"
-  echo "  Platform: $PLATFORM"
+  echo "  ZIG_HOME:   $ZIG_HOME"
+  echo "  BIN_DIR:    $BIN_DIR"
+  echo "  CACHE_DIR:  $CACHE_DIR"
+  echo "  Platform:   $PLATFORM"
   echo "  Downloader: $DOWNLOADER"
   echo
 
+  # Active version check
+  local active_ver=""
   if [[ -L "$ACTIVE_LINK" ]]; then
-    echo "Active version: $(current)"
+    active_ver="$(current 2>/dev/null || echo "")"
+  fi
+  
+  if [[ -n "$active_ver" && "$active_ver" != "none" ]]; then
+    echo "Active version: $active_ver"
+    if [[ -x "$ACTIVE_LINK/zig" ]]; then
+      local zig_ver
+      zig_ver="$("$ACTIVE_LINK/zig" version 2>/dev/null || echo "unknown")"
+      echo "  Build: $zig_ver"
+    fi
   else
     echo "Active version: none"
   fi
   echo
 
-  echo "Zig binary: $ZIG_SYMLINK"
-  if [[ -x "$ZIG_SYMLINK" ]]; then
-    echo "  ✓ exists and executable"
-    "$ZIG_SYMLINK" version 2>/dev/null || echo "  ⚠ but 'zig version' failed"
+  # Installed versions
+  echo "Installed versions:"
+  if [[ -d "$VERSIONS_DIR" ]]; then
+    local count=0
+    local has_versions=false
+    
+    # Check if directory has any content
+    if [[ -n "$(ls -A "$VERSIONS_DIR" 2>/dev/null)" ]]; then
+      has_versions=true
+      for v in "$VERSIONS_DIR"/*; do
+        [[ ! -d "$v" ]] && continue
+        local ver_name
+        ver_name="$(basename "$v")"
+        if [[ "$ver_name" == "$active_ver" ]]; then
+          echo "  * $ver_name (active)"
+        else
+          echo "    $ver_name"
+        fi
+        ((count++))
+      done
+    fi
+    
+    if [[ "$has_versions" == true && $count -gt 0 ]]; then
+      echo "  ---"
+      echo "  Total: $count version(s)"
+    else
+      echo "  No versions installed"
+    fi
   else
-    echo "  ✗ not found or not executable"
+    echo "  No versions installed"
   fi
   echo
 
+  # Zig binary check
+  echo "Zig binary:"
+  echo "  Path: $ZIG_SYMLINK"
+  if [[ -L "$ZIG_SYMLINK" ]]; then
+    local link_target
+    link_target="$(readlink -f "$ZIG_SYMLINK" 2>/dev/null || echo "broken link")"
+    echo "  Link: $link_target"
+  fi
+  
+  if [[ -x "$ZIG_SYMLINK" ]]; then
+    echo "  ✓ Exists and executable"
+    if "$ZIG_SYMLINK" version >/dev/null 2>&1; then
+      echo "  ✓ 'zig version' works"
+    else
+      echo "  ✗ 'zig version' failed"
+    fi
+  else
+    echo "  ✗ Not found or not executable"
+  fi
+  echo
+
+  # PATH check
   echo "PATH check:"
   case ":$PATH:" in
     *":$BIN_DIR:"*)
@@ -641,33 +696,92 @@ doctor() {
       ;;
     *)
       echo "  ✗ $BIN_DIR NOT in PATH"
-      echo "  Add this to your shell config: export PATH=\"$BIN_DIR:\$PATH\""
+      echo "     Add to your shell config:"
+      echo "     export PATH=\"$BIN_DIR:\$PATH\""
       ;;
   esac
   echo
 
-  echo "Dependencies:"
+  # Required dependencies
+  echo "Required dependencies:"
+  local missing_deps=()
   for dep in jq sha256sum tar; do
     if command -v "$dep" >/dev/null 2>&1; then
-      echo "  ✓ $dep"
+      local dep_path
+      dep_path="$(command -v "$dep")"
+      echo "  ✓ $dep → $dep_path"
     else
       echo "  ✗ $dep (missing)"
+      missing_deps+=("$dep")
     fi
   done
+  
+  if [[ ${#missing_deps[@]} -gt 0 ]]; then
+    echo
+    echo "  ⚠ Missing: ${missing_deps[*]}"
+  fi
   echo
   
+  # Download tools
   echo "Download tools:"
+  local has_downloader=false
   for tool in aria2c curl wget; do
     if command -v "$tool" >/dev/null 2>&1; then
+      has_downloader=true
+      local tool_path
+      tool_path="$(command -v "$tool")"
       if [[ "$tool" == "$DOWNLOADER" ]]; then
-        echo "  ✓ $tool (active)"
+        echo "  ✓ $tool (active) → $tool_path"
       else
-        echo "  ✓ $tool"
+        echo "  + $tool → $tool_path"
       fi
     else
-      echo "  - $tool (not installed)"
+      echo "  - $tool"
     fi
   done
+  
+  if [[ "$has_downloader" == false ]]; then
+    echo
+    echo "  ✗ No download tool available"
+    echo "     Install one: aria2, curl, or wget"
+  fi
+  echo
+
+  # Cache status
+  echo "Cache status:"
+  if [[ -f "$INDEX_CACHE" ]]; then
+    local cache_age cache_age_hours cache_age_mins
+    cache_age=$(( $(now) - $(cat "$INDEX_TS" 2>/dev/null || echo 0) ))
+    cache_age_hours=$(( cache_age / 3600 ))
+    cache_age_mins=$(( (cache_age % 3600) / 60 ))
+    
+    if (( cache_age < CACHE_TTL )); then
+      echo "  ✓ Index: valid (${cache_age_hours}h ${cache_age_mins}m old, TTL: $((CACHE_TTL / 3600))h)"
+    else
+      echo "  ⚠ Index: stale (${cache_age_hours}h ${cache_age_mins}m old, TTL: $((CACHE_TTL / 3600))h)"
+    fi
+  else
+    echo "  - Index: not cached"
+  fi
+  
+  if [[ -d "$CACHE_DIR" ]]; then
+    local cache_size cache_files
+    cache_size=$(du -sh "$CACHE_DIR" 2>/dev/null | cut -f1)
+    cache_files=$(find "$CACHE_DIR" -type f 2>/dev/null | wc -l)
+    echo "  Size: $cache_size ($cache_files files)"
+  fi
+  echo
+  
+  # System info
+  echo "System info:"
+  echo "  OS: $OS"
+  echo "  Arch: $ARCH"
+  echo "  Kernel: $(uname -r)"
+  echo "  Shell: ${SHELL##*/}"
+  
+  if [[ -f "$SELF_PATH" ]]; then
+    echo "  zvm: $SELF_PATH"
+  fi
 }
 
 # COMPLETIONS
