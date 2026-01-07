@@ -789,7 +789,7 @@ _zix() {
           COMPREPLY=($(compgen -W "$versions" -- "$cur"))
         fi
         ;;
-      use|remove)
+      use|switch|remove)
         # Show installed versions
         local versions
         if [[ -d "$HOME/.zig/versions" ]]; then
@@ -837,7 +837,7 @@ _zix() {
             _describe 'remote version' versions
           fi
           ;;
-        use|remove)
+        use|switch|remove)
           local -a versions
           if [[ -d "$HOME/.zig/versions" ]]; then
             versions=(${(f)"$(ls -1 "$HOME/.zig/versions" 2>/dev/null)"})
@@ -872,7 +872,7 @@ complete -c zix -n "__fish_use_subcommand" -a update-self -d "Update zix"
 complete -c zix -n "__fish_seen_subcommand_from install" -f -a "(test -f ~/.zig/cache/index.json && jq -r 'keys[]' ~/.zig/cache/index.json 2>/dev/null | sort -V)"
 
 # Complete versions for use/remove commands (local versions)
-complete -c zix -n "__fish_seen_subcommand_from use remove" -f -a "(test -d ~/.zig/versions && ls -1 ~/.zig/versions 2>/dev/null)"
+complete -c zix -n "__fish_seen_subcommand_from use switch remove" -f -a "(test -d ~/.zig/versions && ls -1 ~/.zig/versions 2>/dev/null)"
 EOF
 
   info "shell completions installed"
