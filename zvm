@@ -520,6 +520,7 @@ remove() {
 }
 
 # AUTO (.zigversion)
+# AUTO (.zigversion)
 auto() {
   local file version search_dir
 
@@ -540,6 +541,12 @@ auto() {
         
         info "detected version: $version"
         
+        # Check if it's a dev version (like 0.16.0-dev.1976+8e091047b)
+        if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+ ]]; then
+          version="master"
+          info "switching to: $version"
+        fi
+        
         # Check if version exists in remote index
         local version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
         
@@ -550,10 +557,16 @@ auto() {
           die "invalid version specified in $search_dir/$file"
         fi
         
-        # Install if not already installed
+        # Check if version is installed
         if [[ ! -d "$VERSIONS_DIR/$version" ]]; then
-          info "version $version not installed, installing..."
-          install "$version"
+          info "version $version not installed"
+          read -p "Install $version now? [Y/n] " -n 1 -r
+          echo
+          if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            install "$version"
+          else
+            die "installation cancelled"
+          fi
         else
           info "version $version already installed"
         fi
