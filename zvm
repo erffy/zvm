@@ -311,14 +311,54 @@ install() {
   [[ -z "$version" ]] && die "version required (e.g., 'zvm install 0.11.0' or 'zvm install master')"
 
   local dir="$VERSIONS_DIR/$version"
-  if [[ -d "$dir" ]]; then
+  
+  # Special handling for master: check if update is needed
+  if [[ "$version" == "master" && -d "$dir" ]]; then
+    info "master already installed, checking for updates..."
+    
+    # Get remote master version
+    local remote_version local_version remote_build local_build
+    remote_version="$(zig_meta | jq -r '.master.version // empty' 2>/dev/null)"
+    local_version="$("$dir/zig" version 2>/dev/null || echo "unknown")"
+    
+    if [[ -z "$remote_version" ]]; then
+      warn "failed to fetch remote master version, skipping update check"
+      info "using existing master installation"
+      return 0
+    fi
+    
+    info "remote master: $remote_version"
+    info "local master:  $local_version"
+    
+    # Extract build numbers (e.g., 2048 from 0.16.0-dev.2048+c475ffcd)
+    remote_build=$(echo "$remote_version" | grep -oP 'dev\.\K[0-9]+' || echo "0")
+    local_build=$(echo "$local_version" | grep -oP 'dev\.\K[0-9]+' || echo "0")
+    
+    if [[ "$local_build" -ge "$remote_build" ]]; then
+      info "master is already up to date (build $local_build)"
+      return 0
+    fi
+    
+    info "new master version available (build $local_build → $remote_build)"
+    info "removing old master..."
+    
+    # Remember if master was active
+    local was_active=false
+    local current_ver
+    current_ver="$(current 2>/dev/null || echo "")"
+    [[ "$current_ver" == "master" ]] && was_active=true
+    
+    rm -rf "$dir"
+    
+    # Continue with normal installation flow
+    # After installation, we'll re-activate if needed
+  elif [[ -d "$dir" ]]; then
     info "Zig $version already installed"
     return 0
   fi
 
   # Check if version exists
-  local version_exists
-  version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
+  local version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
   
   if [[ "$version_exists" != "true" ]]; then
     die "version '$version' not found. Use 'zvm list-remote' to see available versions"
@@ -346,7 +386,6 @@ install() {
   mirror="$(pick_mirror)"
   
   # Extract the full URL from tarball field
-  # The tarball field contains the complete URL
   url="$tarball"
   file="$CACHE_DIR/$(basename "$tarball")"
 
@@ -368,8 +407,7 @@ install() {
   fi
 
   info "extracting..."
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
+  local tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
   # Handle both .tar.xz and .zip files
@@ -389,8 +427,7 @@ install() {
     fi
   fi
 
-  local extracted
-  extracted="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+  local extracted="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n1)"
   if [[ -z "$extracted" ]]; then
     rm -rf "$tmp_dir"
     die "no directory found in archive"
@@ -401,6 +438,12 @@ install() {
   trap - EXIT INT TERM
   
   info "installed Zig $version → $dir"
+  
+  # Re-activate master if it was previously active
+  if [[ "$version" == "master" && "${was_active:-false}" == "true" ]]; then
+    info "re-activating master..."
+    use "master"
+  fi
 }
 
 use() {
@@ -423,8 +466,7 @@ list() {
     return
   fi
 
-  local current_version
-  current_version="$(current)"
+  local current_version="$(current)"
   
   info "installed versions:"
   for v in "$VERSIONS_DIR"/*; do
@@ -439,7 +481,16 @@ list() {
 
 list_remote() {
   info "fetching available versions..."
-  zig_meta | jq -r 'keys[]' | sort -V
+  local meta="$(zig_meta)"
+  
+  # Get all versions and process them
+  echo "$meta" | jq -r 'to_entries[] | select(.key != "") | "\(.key)\t\(.value.version // "")"' | sort -V | while IFS=$'\t' read -r key ver; do
+    if [[ "$key" == "master" && -n "$ver" ]]; then
+      echo "master ($ver)"
+    else
+      echo "$key"
+    fi
+  done
 }
 
 current() {
@@ -458,8 +509,7 @@ remove() {
   local dir="$VERSIONS_DIR/$version"
   [[ ! -d "$dir" ]] && die "Zig $version not installed"
 
-  local current_ver
-  current_ver="$(current 2>/dev/null || echo "")"
+  local current_ver="$(current 2>/dev/null || echo "")"
   if [[ "$version" == "$current_ver" ]]; then
     warn "removing currently active version"
     rm -f "$ACTIVE_LINK" "$ZIG_SYMLINK"
@@ -491,8 +541,7 @@ auto() {
         info "detected version: $version"
         
         # Check if version exists in remote index
-        local version_exists
-        version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
+        local version_exists=$(zig_meta | jq -e "has(\"$version\")" 2>/dev/null)
         
         if [[ "$version_exists" != "true" ]]; then
           warn "version '$version' not found in Zig index"
@@ -526,8 +575,7 @@ auto() {
 
 # NIGHTLY
 nightly() {
-  local version
-  version="$(zig_meta | jq -r 'to_entries[] | select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+-dev")) | .key' | sort -V | tail -n1)"
+  local version="$(zig_meta | jq -r 'to_entries[] | select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+-dev")) | .key' | sort -V | tail -n1)"
 
   [[ -z "$version" || "$version" == "null" ]] && die "no nightly version found"
 
