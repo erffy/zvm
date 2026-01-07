@@ -68,14 +68,72 @@ PLATFORM="$ARCH-$OS"
 mkdir -p "$VERSIONS_DIR" "$CACHE_DIR" "$BIN_DIR"
 
 # HELPERS
-die() { echo "zvm: error: $*" >&2; exit 1; }
-warn() { echo "zvm: warning: $*" >&2; }
-info() { echo "zvm: $*"; }
+# Colors
+if [[ -t 1 ]]; then
+  RED=$(printf '\033[31m')
+  GREEN=$(printf '\033[32m')
+  YELLOW=$(printf '\033[33m')
+  BLUE=$(printf '\033[34m')
+  BOLD=$(printf '\033[1m')
+  RESET=$(printf '\033[0m')
+else
+  RED=""
+  GREEN=""
+  YELLOW=""
+  BLUE=""
+  BOLD=""
+  RESET=""
+fi
+
+die() { echo "${RED}error:${RESET} $*" >&2; exit 1; }
+warn() { echo "${YELLOW}warning:${RESET} $*" >&2; }
+info() { echo "${BLUE}info:${RESET} $*"; }
+success() { echo "${GREEN}success:${RESET} $*"; }
 now() { date +%s; }
 
 require() {
   command -v "$1" >/dev/null || die "missing required dependency: $1 (install it with your package manager)"
 }
+
+# Unified fetch function
+# Usage: fetch_url <url> <output_file> [timeout_sec]
+fetch_url() {
+  local url="$1"
+  local output="$2"
+  local timeout="${3:-30}"
+  local dir
+  dir="$(dirname "$output")"
+  local file
+  file="$(basename "$output")"
+  
+  mkdir -p "$dir"
+
+  case "$DOWNLOADER" in
+    aria2c)
+      aria2c --console-log-level=warn --summary-interval=0 \
+        -x 16 -s 16 -k 1M \
+        --max-tries=3 --retry-wait=2 \
+        --connect-timeout=10 --timeout="$timeout" \
+        --allow-overwrite=true \
+        --auto-file-renaming=false \
+        -d "$dir" -o "$file" \
+        "$url"
+      ;;
+    curl)
+      curl -fL --progress-bar \
+        --connect-timeout 10 --max-time "$((timeout * 2))" \
+        --retry 2 --retry-delay 2 \
+        "$url" -o "$output"
+      ;;
+    wget)
+      wget --show-progress -q \
+        --timeout="$timeout" --tries=3 --waitretry=2 \
+        -O "$output" "$url"
+      ;;
+  esac
+}
+
+
 
 # Check for download tools (at least one required)
 detect_downloader() {
@@ -127,35 +185,9 @@ download_file() {
       sleep 2
     fi
     
-    case "$DOWNLOADER" in
-      aria2c)
-        if aria2c --console-log-level=warn --summary-interval=0 \
-          -x 16 -s 16 -k 1M \
-          --max-tries=3 --retry-wait=2 \
-          --connect-timeout=10 --timeout=30 \
-          --allow-overwrite=true \
-          --auto-file-renaming=false \
-          -d "$(dirname "$output")" -o "$(basename "$output")" \
-          "$url" 2>&1; then
-          return 0
-        fi
-        ;;
-      curl)
-        if curl -fL --progress-bar \
-          --connect-timeout 10 --max-time 600 \
-          --retry 2 --retry-delay 2 \
-          "$url" -o "$output" 2>&1; then
-          return 0
-        fi
-        ;;
-      wget)
-        if wget --show-progress -q \
-          --timeout=30 --tries=3 --waitretry=2 \
-          -O "$output" "$url" 2>&1; then
-          return 0
-        fi
-        ;;
-    esac
+    if fetch_url "$url" "$output" 30; then
+      return 0
+    fi
     
     ((attempt++))
   done
@@ -178,44 +210,15 @@ zig_meta() {
   else
     info "fetching Zig index..."
     local tmp="$INDEX_CACHE.tmp"
-    case "$DOWNLOADER" in
-      aria2c)
-        if aria2c --console-log-level=error --summary-interval=0 \
-          -x 4 -s 4 --allow-overwrite=true --auto-file-renaming=false \
-          -d "$(dirname "$tmp")" -o "$(basename "$tmp")" \
-          "$INDEX_URL" 2>/dev/null; then
-          mv "$tmp" "$INDEX_CACHE"
-          now > "$INDEX_TS"
-          cat "$INDEX_CACHE"
-        else
-          rm -f "$tmp"
-          [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
-          die "failed to fetch index and no cache available"
-        fi
-        ;;
-      curl)
-        if curl -fsSL --max-time 30 "$INDEX_URL" -o "$tmp"; then
-          mv "$tmp" "$INDEX_CACHE"
-          now > "$INDEX_TS"
-          cat "$INDEX_CACHE"
-        else
-          rm -f "$tmp"
-          [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
-          die "failed to fetch index and no cache available"
-        fi
-        ;;
-      wget)
-        if wget --timeout=30 -q -O "$tmp" "$INDEX_URL"; then
-          mv "$tmp" "$INDEX_CACHE"
-          now > "$INDEX_TS"
-          cat "$INDEX_CACHE"
-        else
-          rm -f "$tmp"
-          [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
-          die "failed to fetch index and no cache available"
-        fi
-        ;;
-    esac
+    if fetch_url "$INDEX_URL" "$tmp" 30; then
+      mv "$tmp" "$INDEX_CACHE"
+      now > "$INDEX_TS"
+      cat "$INDEX_CACHE"
+    else
+      rm -f "$tmp"
+      [[ -f "$INDEX_CACHE" ]] && { warn "using stale cache"; cat "$INDEX_CACHE"; return; }
+      die "failed to fetch index and no cache available"
+    fi
   fi
 }
 
@@ -235,26 +238,9 @@ fetch_mirrors() {
   local tmp="$MIRROR_CACHE.tmp"
   local fetched=false
   
-  case "$DOWNLOADER" in
-    aria2c)
-      if aria2c --console-log-level=error --summary-interval=0 \
-        --allow-overwrite=true --auto-file-renaming=false \
-        -d "$(dirname "$tmp")" -o "$(basename "$tmp")" \
-        "$MIRROR_LIST_URL" 2>/dev/null; then
-        fetched=true
-      fi
-      ;;
-    curl)
-      if curl -fsSL --max-time 10 "$MIRROR_LIST_URL" -o "$tmp"; then
-        fetched=true
-      fi
-      ;;
-    wget)
-      if wget --timeout=10 -q -O "$tmp" "$MIRROR_LIST_URL"; then
-        fetched=true
-      fi
-      ;;
-  esac
+  if fetch_url "$MIRROR_LIST_URL" "$tmp" 10; then
+    fetched=true
+  fi
   
   if [[ "$fetched" == "true" ]] && sed 's/#.*//' "$tmp" | grep -E '^https?://' > "$MIRROR_CACHE"; then
     rm -f "$tmp"
@@ -644,23 +630,16 @@ doctor() {
     if [[ -n "$(ls -A "$VERSIONS_DIR" 2>/dev/null)" ]]; then
       has_versions=true
       for v in "$VERSIONS_DIR"/*; do
-        [[ ! -d "$v" ]] && continue
+        if [[ ! -d "$v" ]]; then continue; fi
         local ver_name
         ver_name="$(basename "$v")"
         if [[ "$ver_name" == "$active_ver" ]]; then
-          echo "  * $ver_name (active)"
+          echo "  * $ver_name"
         else
           echo "    $ver_name"
         fi
-        ((count++))
+        ((++count))
       done
-    fi
-    
-    if [[ "$has_versions" == true && $count -gt 0 ]]; then
-      echo "  ---"
-      echo "  Total: $count version(s)"
-    else
-      echo "  No versions installed"
     fi
   else
     echo "  No versions installed"
@@ -709,9 +688,9 @@ doctor() {
     if command -v "$dep" >/dev/null 2>&1; then
       local dep_path
       dep_path="$(command -v "$dep")"
-      echo "  ✓ $dep → $dep_path"
+      echo "  + $dep → $dep_path"
     else
-      echo "  ✗ $dep (missing)"
+      echo "  - $dep"
       missing_deps+=("$dep")
     fi
   done
@@ -731,7 +710,7 @@ doctor() {
       local tool_path
       tool_path="$(command -v "$tool")"
       if [[ "$tool" == "$DOWNLOADER" ]]; then
-        echo "  ✓ $tool (active) → $tool_path"
+        echo "  * $tool → $tool_path"
       else
         echo "  + $tool → $tool_path"
       fi
@@ -904,29 +883,10 @@ update_self() {
   info "updating zvm from $repo_url..."
   
   local tmp="$SELF_PATH.tmp"
-  case "$DOWNLOADER" in
-    aria2c)
-      if ! aria2c --console-log-level=warn --summary-interval=0 \
-        --allow-overwrite=true --auto-file-renaming=false \
-        -d "$(dirname "$tmp")" -o "$(basename "$tmp")" \
-        "$repo_url"; then
-        rm -f "$tmp"
-        die "update failed"
-      fi
-      ;;
-    curl)
-      if ! curl -fsSL --max-time 30 "$repo_url" -o "$tmp"; then
-        rm -f "$tmp"
-        die "update failed"
-      fi
-      ;;
-    wget)
-      if ! wget --timeout=30 -q -O "$tmp" "$repo_url"; then
-        rm -f "$tmp"
-        die "update failed"
-      fi
-      ;;
-  esac
+  if ! fetch_url "$repo_url" "$tmp" 30; then
+    rm -f "$tmp"
+    die "update failed"
+  fi
   
   chmod +x "$tmp"
   mv "$tmp" "$SELF_PATH"
@@ -992,7 +952,7 @@ main() {
     list) list ;;
     list-remote) list_remote ;;
     current) current ;;
-    remove)
+    remove|uninstall)
       [[ -z "${2:-}" ]] && die "version required. Usage: zvm remove <version>"
       remove "$2"
       ;;
