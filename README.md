@@ -1,31 +1,37 @@
-# ZIX - Zig Version Manager
+![zix](https://img.shields.io/badge/zix-gray?style=for-the-badge&logo=GNU%20Bash&logoColor=green) 
+![License](https://img.shields.io/badge/License-GPL--3.0-orange?style=for-the-badge) 
+![Stars](https://img.shields.io/gitea/stars/erffy/zix?gitea_url=https%3A%2F%2Fcodeberg.org&style=for-the-badge&color=DAA520)
+![Issues](https://img.shields.io/github/issues/erffy/zix?style=for-the-badge)
+![Last Commit](https://img.shields.io/gitea/last-commit/erffy/zix?gitea_url=https%3A%2F%2Fcodeberg.org&style=for-the-badge&color=F7A41D)
 
-A fast, lightweight, and powerful Zig version manager written in pure Bash.<br>
+**A fast, lightweight, and powerful Zig version manager**
+
+### Overview
+
 Manage multiple Zig versions effortlessly with intelligent caching, parallel downloads, and automatic version detection.
 
-## Features
-
-- 🚀 **Lightning Fast** - Parallel downloads with aria2c support (up to 16x faster)
+**Key Features:**
 - 🎯 **Smart Version Detection** - Auto-detects `.zigversion` files in project directories
 - 📦 **Multiple Versions** - Install and switch between any Zig version instantly
-- 🔄 **Automatic Updates** - Built-in self-update mechanism
-- 💾 **Intelligent Caching** - Reduces redundant downloads with TTL-based caching
-- 🌐 **Mirror Selection** - Auto-selects fastest mirror for optimal download speeds
-- 🛠️ **Zero Dependencies*** - Works with curl, wget, or aria2c (choose your favorite)
 - 🐚 **Shell Completions** - Tab completion for bash, zsh, and fish
-- 🔍 **Directory Traversal** - Searches for version files up the directory tree
 
 <sub>* Core dependencies: `jq`, `tar`, `sha256sum` (typically pre-installed)</sub>
 
-## Installation
+### Installation
 
 ```bash
 curl -fsSL https://codeberg.org/erffy/zix/raw/branch/master/install.sh | bash
 ```
 
-### Custom Installation
+#### Custom Installation
 
 ```bash
+# clone zix
+git clone https://codeberg.org/erffy/zix.git
+
+# cd into zix
+cd zix
+
 # Custom directories
 ZIG_HOME=/opt/zig ZIX_BIN_DIR=/usr/local/bin ./install.sh
 
@@ -33,7 +39,7 @@ ZIG_HOME=/opt/zig ZIX_BIN_DIR=/usr/local/bin ./install.sh
 ZIX_DOWNLOADER=aria2c ./install.sh
 ```
 
-### Manual Installation
+#### Manual Installation
 
 ```bash
 # Create directories
@@ -50,44 +56,16 @@ ln -sf ~/.zig/zix.sh ~/.local/bin/zix
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## System Requirements
+### Dependencies
 
-### Required Dependencies
+> [!NOTE]
+> `aria2` is recommended for downloads
 
 - `bash` 4.0+
 - `jq` - JSON parsing
 - `tar` - Archive extraction
 - `sha256sum` or `shasum` - Checksum verification
 - One of: `curl`, `wget`, or `aria2c` - Downloads
-
-### Recommended
-
-- `aria2c` - For parallel downloads (10-16x faster)
-
-### Installation Commands
-
-```bash
-# Arch Linux
-sudo pacman -S jq tar coreutils aria2
-
-# Debian/Ubuntu
-sudo apt install jq tar coreutils aria2
-
-# Fedora
-sudo dnf install jq tar coreutils aria2
-
-# macOS
-brew install jq aria2
-```
-
-## Supported Platforms
-
-| Platform | Architecture                           |
-|:---------|:---------------------------------------|
-| Linux    | x86_64, aarch64, arm, riscv64, ppc64le |
-| macOS    | x86_64, aarch64                        |
-| FreeBSD  | x86_64, aarch64, arm                   |
-| NetBSD   | x86_64, aarch64                        |
 
 ## Quick Start
 
@@ -108,9 +86,9 @@ zix use 0.13.0
 zig version
 ```
 
-## Usage
+### Usage
 
-### Basic Commands
+#### Basic Commands
 
 ```bash
 # Install a specific version
@@ -134,7 +112,7 @@ zix current
 zix remove 0.11.0
 ```
 
-### Project Version Management
+#### Project Version Management
 
 Create a `.zigversion` file in your project:
 
@@ -155,16 +133,7 @@ ZIX will search up the directory tree to find the version file, automatically in
 - `.zigversion`
 - `.zv`
 
-### Nightly Builds
-
-```bash
-# Install and use latest nightly
-zix nightly
-
-# Nightly versions are named like: 0.14.0-dev.1234+hash
-```
-
-### Advanced Usage
+#### Advanced Usage
 
 ```bash
 # Check installation and configuration
@@ -183,9 +152,9 @@ zix completion-install
 zix update-self
 ```
 
-## Configuration
+### Configuration
 
-### Environment Variables
+#### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -193,7 +162,7 @@ zix update-self
 | `ZIX_BIN_DIR` | Binary directory | `~/.local/bin` |
 | `ZIX_DOWNLOADER` | Force downloader: `aria2c`, `curl`, or `wget` | Auto-detect |
 
-### Examples
+#### Examples
 
 ```bash
 # Use custom installation directory
@@ -207,9 +176,9 @@ ZIX_DOWNLOADER=curl zix install master
 export ZIX_BIN_DIR="/usr/local/bin"
 ```
 
-## Shell Integration
+### Shell Integration
 
-### Automatic PATH Setup
+#### Automatic PATH Setup
 
 The installer automatically configures your shell. To manually add:
 
@@ -223,7 +192,7 @@ export PATH="$HOME/.local/bin:$PATH"
 fish_add_path "$HOME/.local/bin"
 ```
 
-### Shell Completions
+#### Shell Completions
 
 ```bash
 # Install completions for your shell
@@ -233,20 +202,9 @@ zix completion-install
 source ~/.bashrc  # or ~/.zshrc or ~/.config/fish/config.fish
 ```
 
-## Performance
+### Troubleshooting
 
-ZIX is designed for speed:
-
-- **Parallel Downloads**: aria2c uses up to 16 connections
-- **Smart Caching**: 6-hour TTL reduces redundant API calls
-- **Fast Mirror Selection**: Automatically picks nearest mirror
-- **Efficient Extraction**: Optimized tar operations
-
-*Results vary based on connection and mirror availability*
-
-## 🛠️ Troubleshooting
-
-### Installation Issues
+#### Installation Issues
 
 ```bash
 # Check what's wrong
@@ -259,7 +217,7 @@ cat /tmp/zix-install-*.log
 command -v jq tar sha256sum curl
 ```
 
-### Common Issues
+#### Common Issues
 
 **Problem:** `zix: command not found`
 ```bash
@@ -294,17 +252,7 @@ zix install 0.13.0
 ls -ld ~
 ```
 
-## Updating
-
-```bash
-# Update zix itself
-zix update-self
-
-# Update to latest nightly
-zix nightly
-```
-
-## Uninstallation
+### Uninstallation
 
 ```bash
 # Remove all installed Zig versions
@@ -318,35 +266,14 @@ rm -f ~/.local/bin/zix
 # Remove the zix PATH export line
 ```
 
-## Version File Format
-
-Simple text file with version number:
-
-```
-# .zigversion example
-0.13.0
-```
-
-**Features:**
-- Comments supported (lines starting with `#`)
-- Whitespace is ignored
-- First non-comment line is used
-
-**Example:**
-```
-# Project Zig version
-# Updated: 2024-01-06
-0.13.0
-```
-
-## Contributing
+### Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
 
-## 🙏 Acknowledgments
+### Acknowledgments
 
-- Inspired by [nvm](https://github.com/nvm-sh/nvm), [rbenv](https://github.com/rbenv/rbenv), and other version managers
 - Built for the [Zig](https://ziglang.org) community
+- Inspired by [nvm](https://github.com/nvm-sh/nvm) and other version managers
 - Powered by [aria2](https://aria2.github.io) for blazing fast downloads
 
 ---
