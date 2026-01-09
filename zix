@@ -571,18 +571,6 @@ auto() {
   die "no .zig-version, .zigversion or .zv file found (searched up to root)"
 }
 
-# NIGHTLY
-nightly() {
-  local version="$(zig_meta | jq -r 'to_entries[] | select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+-dev")) | .key' | sort -V | tail -n1)"
-
-  [[ -z "$version" || "$version" == "null" ]] && die "no nightly version found"
-
-  info "latest nightly: $version"
-
-  [[ ! -d "$VERSIONS_DIR/$version" ]] && install "$version"
-  use "$version"
-}
-
 # ENV
 env_cmd() {
 cat <<EOF
@@ -775,7 +763,7 @@ cat > "$bash_dir/zix" <<'EOF'
 _zix() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
-  local cmds="install use switch list list-remote current remove auto nightly env doctor clean completion-install update-self"
+  local cmds="install use switch list list-remote current remove auto env doctor clean completion-install update-self"
   
   if [[ $COMP_CWORD -eq 1 ]]; then
     COMPREPLY=($(compgen -W "$cmds" -- "$cur"))
@@ -816,7 +804,6 @@ _zix() {
     'current:show current version'
     'remove:remove a version'
     'auto:use version from .zigversion'
-    'nightly:install and use latest nightly'
     'env:show environment setup'
     'doctor:check installation'
     'clean:clear download cache'
@@ -861,7 +848,6 @@ complete -c zix -n "__fish_use_subcommand" -a list-remote -d "List available ver
 complete -c zix -n "__fish_use_subcommand" -a current -d "Show current version"
 complete -c zix -n "__fish_use_subcommand" -a remove -d "Remove a version"
 complete -c zix -n "__fish_use_subcommand" -a auto -d "Use version from .zigversion"
-complete -c zix -n "__fish_use_subcommand" -a nightly -d "Install latest nightly"
 complete -c zix -n "__fish_use_subcommand" -a env -d "Show environment setup"
 complete -c zix -n "__fish_use_subcommand" -a doctor -d "Check installation"
 complete -c zix -n "__fish_use_subcommand" -a clean -d "Clear download cache"
@@ -919,7 +905,6 @@ Commands:
   current                Show currently active version
   remove <version>       Remove an installed version
   auto                   Use version from .zig-version file
-  nightly                Install and use latest nightly build
   env                    Show environment setup commands
   doctor                 Check installation and configuration
   clean                  Clear download cache
@@ -929,7 +914,6 @@ Commands:
 Examples:
   zix install 0.15.2     Install Zig 0.15.2
   zix use 0.15.2         Switch to Zig 0.15.2
-  zix nightly            Use latest nightly build
   zix auto               Use version from .zig-version
 
 Environment Variables:
@@ -945,12 +929,10 @@ main() {
   
   case "$cmd" in
     install)
-      [[ -z "${2:-}" ]] && die "version required. Usage: zix install <version>"
-      install "$2"
+      [[ -z "${2:-}" ]] && warn "version not specified, attempting to detect automatically" && auto || install "$2"
       ;;
     use|switch)
-      [[ -z "${2:-}" ]] && die "version required. Usage: zix $1 <version>"
-      use "$2"
+      [[ -z "${2:-}" ]] && warn "version not specified, attempting to detect automatically" && auto || use "$2"
       ;;
     list) list ;;
     list-remote) list_remote ;;
@@ -960,7 +942,6 @@ main() {
       remove "$2"
       ;;
     auto) auto ;;
-    nightly) nightly ;;
     env) env_cmd ;;
     doctor) doctor ;;
     clean) clean ;;
